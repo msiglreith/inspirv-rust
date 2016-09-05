@@ -37,6 +37,21 @@ use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueF
 const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
 
+#[derive(PartialEq, Eq, Clone)]
+enum InspirvAttribute {
+    Interface {
+        binding: u64,
+    },
+    Vector {
+        base: Box<Type>,
+        components: u64,
+    },
+    EntryPoint {
+        stage: ExecutionModel,
+    },
+    Builtin,
+}
+
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                                     mut mir_map: &mut MirMap<'tcx>,
                                     analysis: &ty::CrateAnalysis) {
@@ -131,6 +146,135 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         while let Some(instr) = reader.read_instruction().unwrap() {
             println!("{:?}", instr);
         }
+    }
+
+    fn parse_inspirv_attributes(&self, ast_attribs: &[syntax::ast::Attribute]) -> Vec<InspirvAttribute> {
+        let mut attrs = Vec::new();
+
+        for attr in ast_attribs {
+            match attr.node.value.node {
+                MetaItemKind::List(ref name, ref items) if name == "inspirv" => {
+                    for item in items {
+                        match item.node {
+                            NestedMetaItemKind::MetaItem(ref item) => {
+                                match item.node {
+                                    MetaItemKind::NameValue(ref name, ref value) => {
+                                        match &**name {
+                                            "entry_point" => {
+                                                let stage = match &*extract_attr_str(value) {
+                                                    "vertex" => Some(ExecutionModel::ExecutionModelVertex),
+                                                    "tessellation_control" => Some(ExecutionModel::ExecutionModelTessellationControl),
+                                                    "tessellation_eval" => Some(ExecutionModel::ExecutionModelTessellationEvaluation),
+                                                    "geometry" => Some(ExecutionModel::ExecutionModelGeometry),
+                                                    "fragment" => Some(ExecutionModel::ExecutionModelFragment),
+                                                    "gl_compute" => Some(ExecutionModel::ExecutionModelGLCompute),
+                                                    "kernel" => Some(ExecutionModel::ExecutionModelKernel),
+                                                    _ => {
+                                                        self.tcx.sess.span_err(item.span, "Unknown `inspirv` entry_point execution model");
+                                                        None
+                                                    },
+                                                };
+
+                                                if let Some(stage) = stage {
+                                                    attrs.push(InspirvAttribute::EntryPoint { stage: stage });
+                                                }
+                                            },
+
+                                            _ => {
+                                                self.tcx.sess.span_err(item.span,
+                                                                       "Unknown `inspirv` \
+                                                                        attribute name value item")
+                                            }
+                                        }
+                                    },
+                                    MetaItemKind::Word(ref name) => {
+                                        match &**name {
+                                            "builtin" => attrs.push(InspirvAttribute::Builtin),
+                                            _ => {
+                                                self.tcx.sess.span_err(item.span,
+                                                                       "Unknown `inspirv` \
+                                                                        attribute word item")
+                                            }
+                                        }
+                                    },
+                                    MetaItemKind::List(ref name, ref items) => {
+                                        match &**name {
+                                            "interface" => {
+
+                                            },
+
+                                            "vector" => {
+                                                let mut base = None;
+                                                let mut components = None;
+                                                for item in items {
+                                                    match item.node {
+                                                        NestedMetaItemKind::MetaItem(ref item) => {
+                                                            match item.node {
+                                                                MetaItemKind::NameValue(ref name, ref value) => {
+                                                                    match &**name {
+                                                                        "components" => { // TODO: low: check > 1
+                                                                            components = match value.node {
+                                                                                syntax::ast::LitKind::Int(b, _) => Some(b),
+                                                                                _ => panic!("attribute values need to be interger"),
+                                                                            }
+                                                                        },
+                                                                        "base" => {
+                                                                            base = match &*extract_attr_str(value) {
+                                                                                "bool" => Some(Type::Bool),
+                                                                                "f32" => Some(Type::Float(32)),
+                                                                                "f64" => Some(Type::Float(64)),
+
+                                                                                _ => {
+                                                                                    self.tcx.sess.span_err(item.span, "Unsupported `inspirv` vector base type");
+                                                                                    None
+                                                                                }
+                                                                            }
+                                                                        },
+
+                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
+                                                                    }
+                                                                }
+                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
+                                                            }
+                                                        }
+                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
+                                                    }
+                                                }
+
+                                                if base.is_none() || components.is_none() {
+                                                    self.tcx.sess.span_err(item.span,
+                                                                           "`inspirv` vector \
+                                                                            misses `base` or \
+                                                                            `component` \
+                                                                            attributes");
+                                                } else {
+                                                    attrs.push(InspirvAttribute::Vector { 
+                                                        base: Box::new(base.unwrap()),
+                                                        components: components.unwrap()
+                                                    });
+                                                }
+                                            }
+
+                                            _ => self.tcx.sess.span_err(item.span,
+                                                                       "Unknown `inspirv` \
+                                                                        attribute list item"),
+                                        }  
+                                    },
+                                }
+                            },
+                            _ => {
+                                self.tcx.sess.span_err(item.span,
+                                                       "Unknown `inspirv` attribute nested item.")
+                            }
+                        }
+                    }
+                }
+
+                _ => (), // ignore non `#[inspirv(..)]` attributes
+            }
+        }
+
+        attrs
     }
 
     fn resolve_lvalue(&self, lvalue: &Lvalue<'tcx>) -> Option<(Id, Type)> {
@@ -240,50 +384,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
     fn trans_static(&mut self, id: NodeId, mutability: hir::Mutability, mir: &'v Mir<'tcx>) {
         println!("{:?}", (id, mutability, mir));
-
-        for attr in self.tcx.map.attrs(id) {
-            match attr.node.value.node {
-                MetaItemKind::List(ref name, ref items) if name == "inspirv" => {
-                    for item in items {
-                        match item.node {
-                            NestedMetaItemKind::MetaItem(ref item) => {
-                                match item.node {
-                                    MetaItemKind::NameValue(ref name, ref value) => {
-                                        // TODO:
-                                        match &**name {
-                                            "storage_class" => {
-                                                match &*extract_attr_str(value) {
-                                                    _ => (),
-                                                }
-                                            }
-
-                                            // TODO: maybe other things needed in the future?
-                                            _ => {
-                                                self.tcx
-                                                    .sess
-                                                    .span_err(item.span, "Unknown `inspirv` attribute item")
-                                            }
-                                        }
-                                    },
-                                    _ => {
-                                        self.tcx
-                                            .sess
-                                            .span_err(item.span, "Unknown `inspirv` attribute item")
-                                    }
-                                }
-                            },
-                            _ => {
-                                self.tcx
-                                    .sess
-                                    .span_err(item.span, "Unknown `inspirv` attribute item.")
-                            }
-                        }
-                    }
-                }
-
-                _ => (),
-            }
-        }
     }
 
     fn trans_const(&mut self, id: NodeId, mir: &'v Mir<'tcx>) {
@@ -291,90 +391,31 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     }
 
     fn trans_fn(&mut self, id: NodeId, mir: &'v Mir<'tcx>) {
-        
-
         let (mut fn_module, arg_ids) =
             {
-                // check if we have an entry point or a normal function
-                let mut entry_point: Option<ExecutionModel> = None;
                 let mut execution_modes: HashMap<ExecutionModeKind, ExecutionMode> = HashMap::new();
-                let mut builtin = false;
 
-                // extract all inspirv related attributes for our function
-                // every attribute has to be sth like `#[inspirv(..)]
-                for attr in self.tcx.map.attrs(id) {
-                    match attr.node.value.node {
-                        MetaItemKind::List(ref name, ref items) if name == "inspirv" => {
-                            for item in items {
-                                match item.node {
-                                    NestedMetaItemKind::MetaItem(ref item) => {
-                                        match item.node {
-                                            MetaItemKind::NameValue(ref name, ref value) => {
-                                                match &**name {
-                                                    "entry_point" => {
-                                                        match &*extract_attr_str(value) {
-                                                            "vertex" => entry_point = Some(ExecutionModel::ExecutionModelVertex),
-                                                            "tessellation_control" => entry_point = Some(ExecutionModel::ExecutionModelTessellationControl),
-                                                            "tessellation_eval" => entry_point = Some(ExecutionModel::ExecutionModelTessellationEvaluation),
-                                                            "geometry" => entry_point = Some(ExecutionModel::ExecutionModelGeometry),
-                                                            "fragment" => entry_point = Some(ExecutionModel::ExecutionModelFragment),
-                                                            "gl_compute" => entry_point = Some(ExecutionModel::ExecutionModelGLCompute),
-                                                            "kernel" => entry_point = Some(ExecutionModel::ExecutionModelKernel),
-                                                            _ => {
-                                                                self.tcx.sess.span_err(item.span,
-                                                                                       "Unknown `inspirv` \
-                                                                                        entry_point \
-                                                                                        execution model")
-                                                            }
-                                                        }
-                                                    }
-
-                                                    // TODO: execution modes e.g local_size(x = 5, y = 10, z = 1)
-                                                    // TODO: maybe other things needed in the future? intrinsics?
-                                                    _ => {
-                                                        self.tcx.sess.span_err(item.span,
-                                                                               "Unknown `inspirv` \
-                                                                                attribute item")
-                                                    }
-                                                }
-                                            },
-                                            MetaItemKind::Word(ref name) => {
-                                                match &**name {
-                                                    "builtin" => builtin = true,
-                                                    _ => {
-                                                        self.tcx.sess.span_err(item.span,
-                                                                               "Unknown `inspirv` \
-                                                                                attribute item")
-                                                    }
-                                                }
-                                            },
-                                            _ => { self.tcx.sess.span_err(item.span,
-                                                                               "Unknown `inspirv` \
-                                                                                attribute item")
-                                            }
-                                        }
-                                    },
-                                    _ => {
-                                        self.tcx.sess.span_err(item.span,
-                                                               "Unknown `inspirv` attribute item.")
-                                    }
-                                }
-                            }
-                        }
-
-                        _ => (), // println!("{:?}", attr.node.value.node),
-                    }
-                }
+                let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(id));
 
                 // We don't translate builtin functions, these will be handled internally
-                if builtin {
+                if attrs.iter().any(|attr| *attr == InspirvAttribute::Builtin) {
                     return;
                 }
 
                 let fn_name = &*self.tcx.map.name(id).as_str();
+                let entry_point = attrs.iter().find(|attr| match *attr {
+                    &InspirvAttribute::EntryPoint { .. } => true,
+                    _ => false,
+                });
 
-                if let Some(execution_model) = entry_point {
+                // Specific entry point handling
+                // These functions don't have actual input/output parameters
+                // We actually use them for the shader interface and uniforms
+                if let Some(&InspirvAttribute::EntryPoint{ stage, .. }) = entry_point {
                     // TODO: better error handling
+
+                    // TODO: high: input parameters are passed by value, const buffers as reference and mutable buffers as mut ref
+                    // This required handling of the different attributes attached to the parameter types
 
                     // Extract all arguments and store their ids in a list for faster access later
                     // entry point arguments are handled as interfaces instead of normal function arguments
@@ -391,10 +432,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                         }
                     }
 
-                    // TODO: mid: split tuple types into multiple output interfaces
-                    // TODO: high: We could also handle this differently by specifying all interfaces as arguments annotated with the storage storage_class
-                    //      e.g. fn foo(pos: &(f32, f32, f32), color: &vec4, #[inspirv(output)] vertex_pos: &mut vec4) { .. }
-                    // return types are handled as output interfaces
+                    
                     {
                         let ty = mir.return_ty;
                         {
@@ -411,7 +449,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                         arg_ids.iter().filter_map(|arg| arg.clone().map(|arg| arg.id)).collect();
 
                     let mut func = self.builder
-                        .define_entry_point(fn_name, execution_model, execution_modes, interfaces)
+                        .define_entry_point(fn_name, stage, execution_modes, interfaces)
                         .ok()
                         .unwrap();
 
@@ -708,97 +746,14 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
                 // Dont know how to correctly retrieve this information for non-local crates!
                 let node_id = self.tcx.map.as_local_node_id(adt.did).unwrap();
-                // extract all inspirv related attributes for our function
-                // every attribute has to be sth like `#[inspirv(..)]
-                let mut internal_type = None;
-                for attr in self.tcx.map.attrs(node_id) {
-                    match attr.node.value.node {
-                        MetaItemKind::List(ref name, ref items) if name == "inspirv" => {
-                            for item in items {
-                                match item.node {
-                                    NestedMetaItemKind::MetaItem(ref item) => {
-                                        match item.node {
-                                            MetaItemKind::NameValue(ref name, ref value) => {
-                                                match &**name {
-                                                    "vector" => {
-                                                        let mut base = None;
-                                                        let mut components = None;
-                                                        for item in items {
-                                                            match item.node {
-                                                                NestedMetaItemKind::MetaItem(ref item) => {
-                                                                    match item.node {
-                                                                        MetaItemKind::NameValue(ref name,
-                                                                                                ref value) => {
-                                                                            match &**name {
-                                                                                "components" => {
-                                                                                    components =
-                                                                                        extract_attr_str(value)
-                                                                                            .parse()
-                                                                                            .ok()
-                                                                                } // TODO: low: check > 1
-                                                                                "base" => {
-                                                                                    base = match &*extract_attr_str(value) {
-                                                                                        "bool" => Some(Type::Bool),
-                                                                                        "f32" => Some(Type::Float(32)),
-                                                                                        "f64" => Some(Type::Float(64)),
+                let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
+                let internal_type = attrs.iter().find(|attr| match *attr {
+                    &InspirvAttribute::Vector { .. } => true,
+                    _ => false,
+                });
 
-                                                                                        _ => {
-                                                                                            self.tcx.sess.span_err(item.span, "Unsupported `inspirv` vector base type");
-                                                                                            None
-                                                                                        }
-                                                                                    }
-                                                                                }
-
-                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
-                                                                            }
-                                                                        }
-                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
-                                                                    }
-                                                                }
-                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
-                                                            }
-                                                        }
-
-                                                        if base.is_none() || components.is_none() {
-                                                            self.tcx.sess.span_err(item.span,
-                                                                                   "`inspirv` vector \
-                                                                                    misses `base` or \
-                                                                                    `component` \
-                                                                                    attributes");
-                                                        } else {
-                                                            internal_type =
-                                                                Some(Type::Vector(Box::new(base.unwrap()),
-                                                                                  components.unwrap()));
-                                                        }
-                                                    }
-                                                    _ => {
-                                                        self.tcx.sess.span_err(item.span,
-                                                                               "Unknown `inspirv` \
-                                                                                attribute item")
-                                                    }
-                                                }
-                                            },
-                                            _ => {
-                                                    self.tcx.sess.span_err(item.span,
-                                                                           "Unknown `inspirv` \
-                                                                            attribute item")
-                                            }
-                                        }
-                                    }
-                                    _ => {
-                                        self.tcx
-                                            .sess
-                                            .span_err(item.span, "Unknown `inspirv` attribute item")
-                                    }
-                                }
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-
-                if let Some(internal) = internal_type {
-                    internal
+                if let Some(&InspirvAttribute::Vector{ ref base, components }) = internal_type {
+                    Type::Vector(base.clone(), components as u32)
                 } else {
                     Type::Void // TODO: testing only
                 }
