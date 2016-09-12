@@ -16,23 +16,43 @@ impl float4 {
     }
 }
 
+
 #[inspirv(interface)]
-struct VertexInput {
+struct QuadVertex {
     #[inspirv(location = 0)]
     pos: float4,
+
+    #[inspirv(location = 1)]
+    color: float4,
 }
 
 #[inspirv(interface)]
-struct VertexVarying {
+struct QuadVarying {
     #[inspirv(location = 0)]
     #[inspirv(builtin = "Position")]
     pos: float4,
+
+    #[inspirv(location = 1)]
+    color: float4,
+}
+
+#[inspirv(interface)]
+struct QuadOut {
+    #[inspirv(location = 0)]
+    color: float4,
 }
 
 #[inspirv(entry_point = "vertex")]
-fn vertex(input: VertexInput) -> VertexVarying {
-    float4::new(0.0f32, 1.0f32, 0.0f32, 1.0f32);
-    VertexVarying {
-        pos: float4::new(1.0f32, 1.0f32, 0.0f32, 1.0f32),
+fn vertex(input: QuadVertex) -> QuadVarying {
+    QuadVarying {
+        pos: input.pos,
+        color: input.color,
+    }
+}
+
+#[inspirv(entry_point = "fragment")]
+fn fragment(input: QuadVarying) -> QuadOut {
+    QuadOut {
+        color: float4::new(0.0f32, 1.0f32, 1.0f32, 1.0f32),
     }
 }

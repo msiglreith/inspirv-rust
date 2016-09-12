@@ -1,46 +1,37 @@
-use libc::c_char;
-use error::*;
+
 use rustc_mir as mir;
 use rustc::mir::transform::MirSource;
 use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal;
-use rustc_const_math::{ConstInt, ConstIsize, ConstFloat};
-use rustc::ty::{self, TyCtxt, Ty, FnSig};
-use rustc::ty::layout::{self, Layout, Size};
-use rustc::ty::subst::Substs;
-use rustc::hir::intravisit::{self, Visitor, FnKind};
-use rustc::hir::{self, FnDecl, Block};
+use rustc_const_math::{ConstInt, ConstFloat};
+use rustc::ty::{self, TyCtxt, Ty};
+use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::util::common::time;
 use rustc_borrowck as borrowck;
-use rustc_data_structures::indexed_vec::{IndexVec, Idx};
+use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use syntax;
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy, MetaItemKind, NestedMetaItemKind};
-use syntax::codemap::Span;
-use std::ffi::CString;
-use std::ptr;
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-use std::io;
 use std::fs::File;
 use monomorphize;
-use traits;
 use inspirv;
 use inspirv::types::*;
 use inspirv::core::instruction as core_instruction;
 use inspirv::core::enumeration::*;
 use inspirv::instruction::{Instruction, BranchInstruction};
-use inspirv_builder::function::{Argument, LocalVar};
+use inspirv_builder::function::{Argument, LocalVar, Block};
 use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueFloat};
 
-const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
+// const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(Clone, Debug)]
 enum InspirvAttribute {
-    Interface {
-        binding: u64,
+    Interface,
+    Location {
+        location: u64,
     },
     Vector {
         base: Box<Type>,
@@ -48,8 +39,15 @@ enum InspirvAttribute {
     },
     EntryPoint {
         stage: ExecutionModel,
+        execution_modes: HashMap<ExecutionModeKind, ExecutionMode>,
     },
-    Builtin,
+    CompilerBuiltin,
+    Builtin {
+        builtin: BuiltIn
+    },
+    Intrinsic {
+        name: String,
+    },
 }
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
@@ -96,16 +94,39 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         arg_ids: IndexVec::new(),
         var_ids: IndexVec::new(),
         temp_ids: IndexVec::new(),
-        return_id: None,
+        return_ids: None,
     };
 
     v.trans();
 }
 
+#[derive(Clone, Debug)]
 enum SpirvOperand {
-    Consume(Id, Type),
+    Consume(SpirvLvalue),
     Constant(Id),
+    FnCall(DefId),
     None, // TODO: temp
+}
+
+#[derive(Clone, Debug)]
+enum SpirvLvalue {
+    Variable(Id, Type, StorageClass),
+    Interface(Vec<(Id, Type)>, StorageClass),
+    AccessChain(Id, StorageClass, Vec<Id>, Type),
+    Return(Id, Type),
+    Ignore, // Ignore this lvalue, e.g. return = ()
+}
+
+#[derive(Clone)]
+enum FuncArg {
+    Argument(Argument),
+    Interface(Vec<(Id, Type)>),
+}
+
+#[derive(Clone)]
+enum FuncReturn {
+    Return(LocalVar),
+    Interface(Vec<(Id, Type)>),
 }
 
 struct InspirvModuleCtxt<'v, 'tcx: 'v> {
@@ -113,10 +134,10 @@ struct InspirvModuleCtxt<'v, 'tcx: 'v> {
     mir_map: &'v MirMap<'tcx>,
     builder: ModuleBuilder,
 
-    arg_ids: IndexVec<Arg, Option<Argument>>,
+    arg_ids: IndexVec<Arg, Option<FuncArg>>,
     var_ids: IndexVec<Var, LocalVar>,
     temp_ids: IndexVec<Temp, LocalVar>,
-    return_id: Option<LocalVar>,
+    return_ids: Option<FuncReturn>,
 }
 
 impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
@@ -176,8 +197,63 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                 };
 
                                                 if let Some(stage) = stage {
-                                                    attrs.push(InspirvAttribute::EntryPoint { stage: stage });
+                                                    attrs.push(InspirvAttribute::EntryPoint { stage: stage, execution_modes: HashMap::new(), });
                                                 }
+                                            },
+
+                                            "location" => {
+                                                match value.node {
+                                                    syntax::ast::LitKind::Int(b, _) if b >= 0 => attrs.push(InspirvAttribute::Location { location: b }),
+                                                    _ => panic!("attribute value need to be valid interger"),
+                                                };
+                                            },
+
+                                            "builtin" => {
+                                                let builtin = match &*extract_attr_str(value) {
+                                                    // Should be all possible builtIn's for shaders 
+                                                    "Position" => Some(BuiltIn::BuiltInPosition),
+                                                    "PointSize" => Some(BuiltIn::BuiltInPointSize),
+                                                    "ClipDistance" => Some(BuiltIn::BuiltInClipDistance),
+                                                    "CullDistance" => Some(BuiltIn::BuiltInCullDistance),
+                                                    "VertexId" => Some(BuiltIn::BuiltInVertexId),
+                                                    "InstanceId" => Some(BuiltIn::BuiltInInstanceId),
+                                                    "PrimitiveId" => Some(BuiltIn::BuiltInPrimitiveId),
+                                                    "Layer" => Some(BuiltIn::BuiltInLayer),
+                                                    "InvocationId" => Some(BuiltIn::BuiltInInvocationId),
+                                                    "ViewportIndex" => Some(BuiltIn::BuiltInViewportIndex),
+                                                    "TessLevelOuter" => Some(BuiltIn::BuiltInTessLevelOuter),
+                                                    "TessLevelInner" => Some(BuiltIn::BuiltInTessLevelInner),
+                                                    "TessCoord" => Some(BuiltIn::BuiltInTessCoord),
+                                                    "PatchVertices" => Some(BuiltIn::BuiltInPatchVertices),
+                                                    "FragCoord" => Some(BuiltIn::BuiltInFragCoord),
+                                                    "PointCoord" => Some(BuiltIn::BuiltInPointCoord),
+                                                    "FrontFacing" => Some(BuiltIn::BuiltInFrontFacing),
+                                                    "SampleId" => Some(BuiltIn::BuiltInSampleId),
+                                                    "SamplePosition" => Some(BuiltIn::BuiltInSamplePosition),
+                                                    "SampleMask" => Some(BuiltIn::BuiltInSampleMask),
+                                                    "FragDepth" => Some(BuiltIn::BuiltInFragDepth),
+                                                    "HelperInvocation" => Some(BuiltIn::BuiltInHelperInvocation),
+                                                    "NumWorkgroups" => Some(BuiltIn::BuiltInNumWorkgroups),
+                                                    "WorkgroupSize" => Some(BuiltIn::BuiltInWorkgroupSize),
+                                                    "WorkgroupId" => Some(BuiltIn::BuiltInWorkgroupId),
+                                                    "LocalInvocationId" => Some(BuiltIn::BuiltInLocalInvocationId),
+                                                    "GlobalInvocationId" => Some(BuiltIn::BuiltInGlobalInvocationId),
+                                                    "LocalInvocationIndex" => Some(BuiltIn::BuiltInLocalInvocationIndex),
+                                                    "VertexIndex" => Some(BuiltIn::BuiltInVertexIndex),
+                                                    "InstanceIndex" => Some(BuiltIn::BuiltInInstanceIndex),
+                                                    _ => {
+                                                        self.tcx.sess.span_err(item.span, "Unknown `inspirv` builtin variable");
+                                                        None
+                                                    },
+                                                };
+
+                                                if let Some(builtin) = builtin {
+                                                    attrs.push(InspirvAttribute::Builtin { builtin: builtin });
+                                                }
+                                            },
+
+                                            "intrinsic" => {
+                                                attrs.push(InspirvAttribute::Intrinsic { name: (*extract_attr_str(value)).to_string() });
                                             },
 
                                             _ => {
@@ -189,20 +265,13 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                     },
                                     MetaItemKind::Word(ref name) => {
                                         match &**name {
-                                            "builtin" => attrs.push(InspirvAttribute::Builtin),
-                                            _ => {
-                                                self.tcx.sess.span_err(item.span,
-                                                                       "Unknown `inspirv` \
-                                                                        attribute word item")
-                                            }
+                                            "compiler_builtin" => attrs.push(InspirvAttribute::CompilerBuiltin),
+                                            "interface" => attrs.push(InspirvAttribute::Interface),
+                                            _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv`attribute word item"),
                                         }
                                     },
                                     MetaItemKind::List(ref name, ref items) => {
                                         match &**name {
-                                            "interface" => {
-
-                                            },
-
                                             "vector" => {
                                                 let mut base = None;
                                                 let mut components = None;
@@ -214,8 +283,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                                     match &**name {
                                                                         "components" => { // TODO: low: check > 1
                                                                             components = match value.node {
-                                                                                syntax::ast::LitKind::Int(b, _) => Some(b),
-                                                                                _ => panic!("attribute values need to be interger"),
+                                                                                syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
+                                                                                _ => panic!("attribute value need to be interger"),
                                                                             }
                                                                         },
                                                                         "base" => {
@@ -277,39 +346,89 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         attrs
     }
 
-    fn resolve_lvalue(&self, lvalue: &Lvalue<'tcx>) -> Option<(Id, Type)> {
+    // TODO: remove ugly clones..
+    fn resolve_lvalue(&mut self, lvalue: &Lvalue<'tcx>) -> Option<SpirvLvalue> {
         match *lvalue {
             Lvalue::Arg(id) => {
-                let arg = self.arg_ids[id].clone().unwrap();
-                Some((arg.id, arg.ty))
+                if let Some(arg) = self.arg_ids[id].clone() {
+                    match arg {
+                        FuncArg::Argument(arg) => Some(SpirvLvalue::Variable(arg.id, arg.ty, StorageClass::StorageClassFunction)),
+                        FuncArg::Interface(interfaces) => Some(SpirvLvalue::Interface(interfaces, StorageClass::StorageClassInput)),
+                    }
+                } else {
+                    Some(SpirvLvalue::Ignore) // unnamed argument `_`
+                }
             }
             Lvalue::Var(id) => {
                 let var = self.var_ids[id].clone();
-                Some((var.id, var.ty))
+                Some(SpirvLvalue::Variable(var.id, var.ty, StorageClass::StorageClassFunction))
             }
             Lvalue::Temp(id) => {
                 let var = self.temp_ids[id].clone();
-                Some((var.id, var.ty))
+                Some(SpirvLvalue::Variable(var.id, var.ty, StorageClass::StorageClassFunction))
             }
-            Lvalue::ReturnPointer => None,
+            Lvalue::ReturnPointer => {
+                match self.return_ids {
+                    Some(FuncReturn::Return(ref var)) => Some(SpirvLvalue::Return(var.id, var.ty.clone())),
+                    Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::Interface(interfaces.clone(), StorageClass::StorageClassOutput)),
+                    None => Some(SpirvLvalue::Ignore),
+                }
+            },
             Lvalue::Static(def_id) => None,
-            Lvalue::Projection(ref projection) => None,
+            Lvalue::Projection(ref proj) => {
+                if let Some(base) = self.resolve_lvalue(&proj.base) {
+                    match (&proj.elem, base) {
+                        (&ProjectionElem::Field(field, _), SpirvLvalue::Interface(ref interfaces, storage_class)) => {
+                            let var = interfaces[field.index()].clone();
+                            Some(SpirvLvalue::Variable(var.0, var.1, storage_class))
+                        }
+                        (&ProjectionElem::Field(field, ty), SpirvLvalue::Variable(id, _, storage_class)) => {
+                            let field_id = self.builder.define_constant(module::Constant::Scalar(ConstValue::U32(field.index() as u32)));
+                            Some(SpirvLvalue::AccessChain(id, storage_class, vec![field_id], self.rust_ty_to_inspirv(ty)))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            },
         }
     }
 
-    fn trans_operand(&mut self, operand: &Operand<'tcx>) -> SpirvOperand {
+    fn transform_lvalue(&mut self, block: &mut Block, lvalue: SpirvLvalue) -> SpirvLvalue {
+        match lvalue {
+            SpirvLvalue::AccessChain(root_id, storage_class, ref chain, ref ty) => {
+                let chain_id = self.builder.alloc_id();
+                block.instructions.push(core_instruction::OpAccessChain(
+                    self.builder.define_type(&Type::Pointer(Box::new(ty.clone()), storage_class)),
+                    chain_id,
+                    root_id,
+                    chain.clone()
+                ).into());
+                SpirvLvalue::Variable(chain_id, ty.clone(), storage_class)
+            },
+            _ => lvalue
+        }
+    }
+
+    fn trans_operand(&mut self, block: &mut Block, operand: &Operand<'tcx>) -> SpirvOperand {
         match *operand {
             Operand::Consume(ref lvalue) => {
-                if let Some((id, ty)) = self.resolve_lvalue(lvalue) {
-                    SpirvOperand::Consume(id, ty)
+                let lvalue = self.resolve_lvalue(lvalue);
+                if let Some(lvalue) = lvalue {
+                    let lvalue = self.transform_lvalue(block, lvalue);
+                    SpirvOperand::Consume(lvalue)
                 } else {
+                    println!("Unable to resolve rvalue operand {:?}", lvalue);
                     SpirvOperand::None
                 }
             }
 
             Operand::Constant(ref c) => {
                 match c.literal {
-                    Literal::Item { .. } => SpirvOperand::None,
+                    Literal::Item { def_id, .. } => {
+                        SpirvOperand::FnCall(def_id)
+                    }
                     Literal::Value { ref value } => {
                         match *value {
                             ConstVal::Float(ConstFloat::F32(v)) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Float(ConstValueFloat::F32(v)))),
@@ -391,104 +510,240 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     }
 
     fn trans_fn(&mut self, id: NodeId, mir: &'v Mir<'tcx>) {
-        let (mut fn_module, arg_ids) =
-            {
-                let mut execution_modes: HashMap<ExecutionModeKind, ExecutionMode> = HashMap::new();
+        self.arg_ids = IndexVec::new();
+        let mut fn_module = {
+            let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(id));
 
-                let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(id));
+            // We don't translate builtin functions, these will be handled internally
+            if attrs.iter().any(|attr| match attr { &InspirvAttribute::CompilerBuiltin | &InspirvAttribute::Intrinsic {..} => true, _ => false }) {
+                return;
+            }
 
-                // We don't translate builtin functions, these will be handled internally
-                if attrs.iter().any(|attr| *attr == InspirvAttribute::Builtin) {
-                    return;
-                }
+            let fn_name = &*self.tcx.map.name(id).as_str();
 
-                let fn_name = &*self.tcx.map.name(id).as_str();
-                let entry_point = attrs.iter().find(|attr| match *attr {
-                    &InspirvAttribute::EntryPoint { .. } => true,
-                    _ => false,
-                });
+            // check if we have an entry point
+            let entry_point = attrs.iter().find(|attr| match *attr {
+                &InspirvAttribute::EntryPoint { .. } => true,
+                _ => false,
+            });
 
-                // Specific entry point handling
-                // These functions don't have actual input/output parameters
-                // We actually use them for the shader interface and uniforms
-                if let Some(&InspirvAttribute::EntryPoint{ stage, .. }) = entry_point {
-                    // TODO: better error handling
+            let mut interface_ids = Vec::new(); // entry points
+            let mut params = Vec::new(); // `normal` function
 
-                    // TODO: high: input parameters are passed by value, const buffers as reference and mutable buffers as mut ref
-                    // This required handling of the different attributes attached to the parameter types
-
-                    // Extract all arguments and store their ids in a list for faster access later
-                    // entry point arguments are handled as interfaces instead of normal function arguments
-                    let mut arg_ids: IndexVec<Arg, Option<Argument>> = IndexVec::new();
-                    for (i, arg) in mir.arg_decls.iter().enumerate() {
-                        let name = &*arg.debug_name.as_str();
-                        if name.is_empty() {
-                            arg_ids.push(None);
-                        } else {
-                            let ty = self.rust_ty_to_inspirv(arg.ty);
-                            let id = self.builder
-                                .define_variable(name, ty.clone(), StorageClass::StorageClassInput);
-                            arg_ids.push(Some(Argument { id: id, ty: ty }));
-                        }
-                    }
-
-                    
-                    {
-                        let ty = mir.return_ty;
-                        {
-                            let ty = self.rust_ty_to_inspirv(ty);
-                            let id = self.builder
-                                .define_variable(format!("{}_ret", fn_name).as_str(),
-                                                 ty.clone(),
-                                                 StorageClass::StorageClassOutput);
-                            arg_ids.push(Some(Argument { id: id, ty: ty }));
-                        }
-                    }
-
-                    let interfaces: Vec<Id> =
-                        arg_ids.iter().filter_map(|arg| arg.clone().map(|arg| arg.id)).collect();
-
-                    let mut func = self.builder
-                        .define_entry_point(fn_name, stage, execution_modes, interfaces)
-                        .ok()
-                        .unwrap();
-
-                    func.ret_ty = Type::Void;
-
-                    (func, arg_ids)
+            // Extract all arguments and store their ids in a list for faster access later
+            // Arguments as Input interface if the structs have to corresponding annotations
+            for arg in mir.arg_decls.iter() {
+                let name = &*arg.debug_name.as_str();
+                if name.is_empty() {
+                    self.arg_ids.push(None);
                 } else {
-                    let mut func = self.builder.define_function_named(fn_name);
+                    // TODO: low-mid: unsafe! We would like to find the attributes of the current type
+                    // Dont know how to correctly retrieve this information for non-local crates!
+                    if let Some(ty_id) = arg.ty.ty_to_def_id() {
+                        let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
+                        let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
 
-                    func.ret_ty = self.rust_ty_to_inspirv(mir.return_ty);
+                        let interface = attrs.iter().find(|attr| match *attr {
+                            &InspirvAttribute::Interface => true,
+                            _ => false,
+                        });
 
-                    // Extract all arguments and store their ids in a list for faster access later
-                    let mut arg_ids: IndexVec<Arg, Option<Argument>> = IndexVec::new();
-                    for (i, arg) in mir.arg_decls.iter().enumerate() {
-                        let name = &*arg.debug_name.as_str();
-                        if name.is_empty() {
-                            arg_ids.push(None);
+                        if let Some(&InspirvAttribute::Interface) = interface {
+                            if let ty::TyStruct(ref adt, ref subs) = arg.ty.sty {
+                                let interfaces = adt.struct_variant().fields.iter().map(|field| {
+                                    let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
+                                    let name = format!("{}::{}", self.tcx.map.name(node_id), field.name.as_str());
+                                    let id = self.builder.define_variable(name.as_str(), ty.clone(),
+                                                                 StorageClass::StorageClassInput);
+
+                                    // HELP! A nicer way to get the attributes?
+                                    // Get struct field attributes
+                                    let node = self.tcx.map.get(node_id);
+                                    let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
+                                    let field_attrs = {
+                                        if let hir::map::Node::NodeItem(ref item) = node {
+                                            if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
+                                                let field = variant_data.fields().iter()
+                                                                        .find(|field| field.id == field_id)
+                                                                        .expect("Unable to find struct field by id");
+                                                self.parse_inspirv_attributes(&*field.attrs)
+                                            } else {
+                                                bug!("Struct item node should be a struct {:?}", item.node)
+                                            }
+                                        } else {
+                                            bug!("Struct node should be a NodeItem {:?}", node)
+                                        }
+                                    };
+
+                                    for attr in field_attrs {
+                                        match attr {
+                                            InspirvAttribute::Location { location } => {
+                                                self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
+                                            }
+                                            // Rust doesn't allow attributes associated with `type foo = bar` /:
+                                            InspirvAttribute::Builtin { builtin } => {
+                                                // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
+                                                self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
+                                            }
+                                            _ => ()
+                                        }
+                                    }
+
+                                    interface_ids.push(id);
+                                    (id, ty)
+                                }).collect::<Vec<_>>();
+
+                                self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
+                            } else {
+                                bug!("Input argument type requires to be struct type ({:?})", arg.ty)
+                            }  
                         } else {
+                            // Entry Point Handling
+                            // These functions don't have actual input/output parameters
+                            // We use them for the shader interface and uniforms
+                            if entry_point.is_some() {
+                                bug!("Input argument type requires interface attribute({:?})", arg.ty)
+                            } else {
+                                let id = self.builder.alloc_id();
+                                let arg = Argument {
+                                    id: id,
+                                    ty: self.rust_ty_to_inspirv(arg.ty),
+                                };
+                                params.push(arg.clone());
+                                self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
+                                self.arg_ids.push(Some(FuncArg::Argument(arg)));
+                            }
+                        }
+                    } else {
+                        if entry_point.is_some() {
+                            bug!("Argument type not defined in local crate({:?})", arg.ty)
+                        } else {
+                            //
                             let id = self.builder.alloc_id();
                             let arg = Argument {
                                 id: id,
                                 ty: self.rust_ty_to_inspirv(arg.ty),
                             };
-                            func.params.push(arg.clone());
-                            self.builder.name_id(id, name); // TODO: hide this behind a function module interface
-                            arg_ids.push(Some(arg));
+                            params.push(arg.clone());
+                            self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
+                            self.arg_ids.push(Some(FuncArg::Argument(arg)));
                         }
                     }
-
-                    (func, arg_ids)
                 }
-            };
+            }
+
+            // Entry Point Handling
+            // These functions don't have actual input/output parameters
+            // We use them for the shader interface and uniforms
+            if let Some(&InspirvAttribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
+                // TODO: high: input parameters are passed by value
+                // This required handling of the different attributes attached to the parameter types
+                // Return type as Output interface
+                match mir.return_ty.sty {
+                    ty::TyStruct(ref adt, ref subs) => {
+                        if let Some(ty_id) = mir.return_ty.ty_to_def_id() {
+                            let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
+                            let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
+
+                            let interface = attrs.iter().find(|attr| match *attr {
+                                &InspirvAttribute::Interface => true,
+                                _ => false,
+                            });
+
+                            if let Some(&InspirvAttribute::Interface) = interface {
+                                let interfaces = adt.struct_variant().fields.iter().map(|field| {
+                                    let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
+                                    let name = format!("{}::{}", self.tcx.map.name(node_id), field.name.as_str());
+                                    let id = self.builder.define_variable(name.as_str(), ty.clone(),
+                                                                 StorageClass::StorageClassOutput);
+
+                                    // HELP! A nicer way to get the attributes?
+                                    // Get struct field attributes
+                                    let node = self.tcx.map.get(node_id);
+                                    let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
+                                    let field_attrs = {
+                                        if let hir::map::Node::NodeItem(ref item) = node {
+                                            if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
+                                                let field = variant_data.fields().iter()
+                                                                        .find(|field| field.id == field_id)
+                                                                        .expect("Unable to find struct field by id");
+                                                self.parse_inspirv_attributes(&*field.attrs)
+                                            } else {
+                                                bug!("Struct item node should be a struct {:?}", item.node)
+                                            }
+                                        } else {
+                                            bug!("Struct node should be a NodeItem {:?}", node)
+                                        }
+                                    };
+
+                                    for attr in field_attrs {
+                                        match attr {
+                                            InspirvAttribute::Location { location } => {
+                                                self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
+                                            }
+                                            // Rust doesn't allow attributes associated with `type foo = bar` /:
+                                            InspirvAttribute::Builtin { builtin } => {
+                                                // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
+                                                self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
+                                            }
+                                            _ => ()
+                                        }
+                                    }
+
+                                    interface_ids.push(id);
+                                    (id, ty)
+                                }).collect::<Vec<_>>();
+                                self.return_ids = Some(FuncReturn::Interface(interfaces));
+                            } else {
+                                bug!("Output argument type requires interface attribute({:?})", mir.return_ty)
+                            }
+                        } else {
+                            bug!("Output argument type not defined in local crate({:?})", mir.return_ty)
+                        }
+                    },
+
+                    ty::TyTuple(&[]) => self.return_ids = None, // MIR doesn't use void(!) instead the () type for some reason \o/
+
+                    _ => bug!("Output argument type requires to be a struct type or empty ({:?})", mir.return_ty)
+                }
+
+                // Define entry point in SPIR-V
+                let mut func = self.builder
+                    .define_entry_point(fn_name, stage, execution_modes.clone(), interface_ids)
+                    .ok()
+                    .unwrap();
+
+                func.ret_ty = Type::Void;
+                func
+            } else {
+                let mut func = self.builder.define_function_named(fn_name);
+
+                func.params = params;
+
+                let return_ty = self.rust_ty_to_inspirv(mir.return_ty);
+                self.return_ids = if let Type::Void = return_ty {
+                    None
+                } else {
+                    let id = self.builder.alloc_id();
+                    let local_var = LocalVar {
+                        id: id,
+                        ty: return_ty.clone(),
+                    };
+                    func.variables.push(local_var.clone());
+                    Some(FuncReturn::Return(local_var))
+                };
+
+                func.ret_ty = return_ty;
+                func
+            }
+        };
 
         println!("{:?}", (id, self.tcx.map.name(id).as_str(), mir));
 
         // local variables and temporaries
-        let var_ids = {
+        self.var_ids = {
             let mut ids: IndexVec<Var, LocalVar> = IndexVec::new();
-            for (i, var) in mir.var_decls.iter().enumerate() {
+            for var in mir.var_decls.iter() {
                 let id = self.builder.alloc_id();
                 let local_var = LocalVar {
                     id: id,
@@ -501,9 +756,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             ids
         };
 
-        let temp_ids = {
+        self.temp_ids = {
             let mut ids: IndexVec<Temp, LocalVar> = IndexVec::new();
-            for (i, var) in mir.temp_decls.iter().enumerate() {
+            for var in mir.temp_decls.iter() {
                 let id = self.builder.alloc_id();
                 let local_var = LocalVar {
                     id: id,
@@ -514,12 +769,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             }
             ids
         };
-
-        println!("{:?}", temp_ids);
-
-        self.arg_ids = arg_ids;
-        self.var_ids = var_ids;
-        self.temp_ids = temp_ids;
 
         // Translate blocks
         let mut block_labels: IndexVec<BasicBlock, Id> = IndexVec::new();
@@ -537,112 +786,166 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 match stmt.kind {
                     StatementKind::Assign(ref lvalue, ref rvalue) => {
                         println!("{:?}", (lvalue, rvalue));
-                        let lvalue = self.resolve_lvalue(lvalue);
+                        
+                        if let Some(lvalue) = self.resolve_lvalue(lvalue) {
+                            let lvalue = self.transform_lvalue(block, lvalue);
+                        
+                            match lvalue {
+                                SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return(lvalue_id, lvalue_ty) => {
+                                    match *rvalue {
+                                        Rvalue::Use(ref operand) => {
+                                            let op = self.trans_operand(block, operand);
+                                            match op {
+                                                SpirvOperand::Constant(op_id) => {
+                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                }
+                                                SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
+                                                    let op_id = self.builder.alloc_id();
+                                                    block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
+                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                }
+                                                SpirvOperand::Consume(SpirvLvalue::Interface(ref interfaces, _)) => {
+                                                    let ids = interfaces.iter().map(|interface| {
+                                                        let id = self.builder.alloc_id();
+                                                        block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&interface.1), id, interface.0, None).into());
+                                                        id
+                                                    }).collect::<Vec<_>>();
+                                                    let composite_id = self.builder.alloc_id();
+                                                    block.instructions.push(core_instruction::OpCompositeConstruct(self.builder.define_type(&lvalue_ty), composite_id, ids).into());
+                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, composite_id, None).into());
+                                                }
+                                                _ => self.tcx.sess.span_err(stmt.source_info.span,
+                                                                   "inspirv: Unsupported rvalue!"),
+                                            }
+                                        }
 
-                        if lvalue.is_none() {
-                            self.tcx.sess.span_warn(stmt.source_info.span,
-                                                    "inspirv: Unhandled stmnt as lvalue couldn't \
-                                                     be resolved!");
-                            continue;
-                        }
+                                        /// [x; 32]
+                                        Rvalue::Repeat(ref operand, ref times) => {}
 
-                        let lvalue_id = lvalue.clone().unwrap().0;
-                        let lvalue_ty = lvalue.unwrap().1;
+                                        Rvalue::Ref(_, _, _) => {
+                                            self.tcx.sess.span_err(stmt.source_info.span,
+                                                                   "inspirv: Unsupported rvalue reference!")
+                                        }
 
-                        match *rvalue {
-                            Rvalue::Use(ref operand) => {
-                                let op = self.trans_operand(operand);
-                                match op {
-                                    SpirvOperand::Constant(op_id) => {
-                                        block.instructions.push(Instruction::Core(core_instruction::Instruction::OpStore(core_instruction::OpStore(lvalue_id, op_id, None))));
+                                        /// length of a [X] or [X;n] value
+                                        Rvalue::Len(ref val) => {}
+
+                                        Rvalue::Cast(ref kind, ref operand, ref ty) => {}
+
+                                        Rvalue::BinaryOp(ref op, ref left, ref right) |
+                                        Rvalue::CheckedBinaryOp(ref op, ref left, ref right) => {
+                                            let left = self.trans_operand(block, left);
+                                            let right = self.trans_operand(block, right);
+                                            println!("binop: {:?}", op);
+
+                                            match (left, right) {
+                                                (SpirvOperand::Consume(SpirvLvalue::Variable(left_ptr_id,
+                                                                       Type::Int(left_width, left_sign), _)),
+                                                 SpirvOperand::Consume(SpirvLvalue::Variable(right_ptr_id,
+                                                                       Type::Int(right_width, right_sign), _))) => {
+                                                    let left_id = self.builder.alloc_id();
+                                                    let right_id = self.builder.alloc_id();
+
+                                                    // load variable values
+                                                    block.instructions
+                                                        .push(core_instruction::OpLoad(
+                                                            self.builder.define_type(&Type::Int(left_width, left_sign)),
+                                                            left_id,
+                                                            left_ptr_id,
+                                                            None
+                                                        ).into());
+
+                                                    block.instructions
+                                                        .push(core_instruction::OpLoad(
+                                                            self.builder.define_type(&Type::Int(right_width, right_sign)),
+                                                            right_id,
+                                                            right_ptr_id,
+                                                            None
+                                                        ).into());
+
+                                                    // emit addition instruction
+                                                    let add_result = self.builder.alloc_id();
+                                                    block.instructions.push(core_instruction::OpIAdd(self.builder.define_type(&lvalue_ty), add_result, left_id, right_id).into());
+                                                    // store
+                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, add_result, None).into());
+                                                }
+
+                                                // TODO:
+                                                _ => (),
+                                            }
+                                        }
+
+                                        Rvalue::UnaryOp(ref op, ref operand) => {
+                                            let operand = self.trans_operand(block, operand);
+                                            println!("unop: {:?}", op);
+                                        }
+
+                                        Rvalue::Aggregate(ref kind, ref operands) => {}
+
+                                        Rvalue::Box(..) => {
+                                            self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid box r-value")
+                                        }
+                                        Rvalue::InlineAsm { .. } => {
+                                            self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid inline asm")
+                                        }
                                     }
-                                    SpirvOperand::Consume(op_ptr_id, op_ty) => {
-                                        let op_id = self.builder.alloc_id();
-                                        block.instructions
-                                            .push(Instruction::Core(core_instruction::Instruction::OpLoad(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None))));
-                                        block.instructions.push(Instruction::Core(core_instruction::Instruction::OpStore(core_instruction::OpStore(lvalue_id, op_id, None))));
-                                    }
-                                    _ => (),
                                 }
-                            }
 
-                            /// [x; 32]
-                            Rvalue::Repeat(ref operand, ref times) => {}
+                                SpirvLvalue::Interface(ref interfaces, _) => {
+                                    match *rvalue {
+                                        Rvalue::Use(ref _operand) => {
+                                            /*
+                                            let op = self.trans_operand(block, operand);
+                                            match op {
+                                                SpirvOperand::Constant(op_id) => {
+                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                }
+                                                SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty)) => {
+                                                    let op_id = self.builder.alloc_id();
+                                                    block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
+                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                }
+                                                SpirvOperand::Consume(SpirvLvalue::Interface(..)) => self.tcx.sess.span_err(stmt.source_info.span,
+                                                                   "inspirv: Unsupported rvalue interface (so far)!"),
+                                                _ => self.tcx.sess.span_err(stmt.source_info.span,
+                                                                   "inspirv: Unsupported rvalue!"),
+                                            }
+                                            */
+                                            self.tcx.sess.span_warn(stmt.source_info.span,
+                                                        "inspirv: Unhandled assignment for interfaces (soon)!")
+                                        }
 
-                            Rvalue::Ref(_, _, _) => {
-                                self.tcx.sess.span_err(stmt.source_info.span,
-                                                       "inspirv: Unsupported rvalue reference!")
-                            }
+                                        Rvalue::Aggregate(ref kind, ref operands) => {
+                                            for (operand, interface) in operands.iter().zip(interfaces.iter()) {
+                                                let op = self.trans_operand(block, operand);
+                                                match op {
+                                                    SpirvOperand::Constant(op_id) => {
+                                                        block.instructions.push(core_instruction::OpStore(interface.0, op_id, None).into());
+                                                    }
+                                                    SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
+                                                        let op_id = self.builder.alloc_id();
+                                                        block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
+                                                        block.instructions.push(core_instruction::OpStore(interface.0, op_id, None).into());
+                                                    }
+                                                    _ => self.tcx.sess.span_err(stmt.source_info.span,
+                                                                       "inspirv: Unsupported aggregate operand!"),
+                                                }
+                                            }
+                                        }
 
-                            /// length of a [X] or [X;n] value
-                            Rvalue::Len(ref val) => {}
-
-                            Rvalue::Cast(ref kind, ref operand, ref ty) => {}
-
-                            Rvalue::BinaryOp(ref op, ref left, ref right) |
-                            Rvalue::CheckedBinaryOp(ref op, ref left, ref right) => {
-                                let left = self.trans_operand(left);
-                                let right = self.trans_operand(right);
-                                println!("binop: {:?}", op);
-
-                                match (left, right) {
-                                    (SpirvOperand::Consume(left_ptr_id,
-                                                           Type::Int(left_widht, left_sign)),
-                                     SpirvOperand::Consume(right_ptr_id,
-                                                           Type::Int(right_width, right_sign))) => {
-                                        let left_id = self.builder.alloc_id();
-                                        let right_id = self.builder.alloc_id();
-
-                                        // load variable values
-                                        block.instructions
-                                            .push(Instruction::Core(core_instruction::Instruction::OpLoad(core_instruction::OpLoad(self.builder.define_type(&Type::Int(left_widht, left_sign)),
-                                                                                                                                   left_id,
-                                                                                                                                   left_ptr_id,
-                                                                                                                                   None))));
-                                        block.instructions
-                                            .push(Instruction::Core(core_instruction::Instruction::OpLoad(core_instruction::OpLoad(self.builder.define_type(&Type::Int(right_width, right_sign)),
-                                                                                                                                   right_id,
-                                                                                                                                   right_ptr_id,
-                                                                                                                                   None))));
-
-                                        // emit addition instruction
-                                        let add_result = self.builder.alloc_id();
-                                        block.instructions.push(Instruction::Core(core_instruction::Instruction::OpIAdd(core_instruction::OpIAdd(self.builder.define_type(&lvalue_ty),
-                                                                                                                                                 add_result,
-                                                                                                                                                 left_id,
-                                                                                                                                                 right_id))));
-
-                                        // store
-                                        block.instructions.push(Instruction::Core(core_instruction::Instruction::OpStore(core_instruction::OpStore(lvalue_id, add_result, None))));
+                                        _ => bug!("Unexpected rvalue for an interface ({:?})", rvalue), // TODO: really a bug?
                                     }
-
-                                    // TODO:
-                                    _ => (),
                                 }
-                            }
 
-                            Rvalue::UnaryOp(ref op, ref operand) => {
-                                let operand = self.trans_operand(operand);
-                                println!("unop: {:?}", op);
+                                SpirvLvalue::Ignore => (),
+                                SpirvLvalue::AccessChain(root_id, storage_class, chain, ty) => unreachable!(),        
                             }
-
-                            Rvalue::Aggregate(ref kind, ref operands) => {}
-
-                            Rvalue::Box(..) => {
-                                self.tcx
-                                    .sess
-                                    .span_err(stmt.source_info.span, "inspirv: Invalid box r-value")
-                            }
-                            Rvalue::InlineAsm { .. } => {
-                                self.tcx
-                                    .sess
-                                    .span_err(stmt.source_info.span, "inspirv: Invalid inline asm")
-                            }
+                        } else {
+                            self.tcx.sess.span_warn(stmt.source_info.span, "inspirv: Unhandled stmnt as lvalue couldn't be resolved!");
                         }
                     }
                     // Translation only
                     StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
-
                     StatementKind::SetDiscriminant { .. } => println!("{:?}", stmt.kind),
                 }
             }
@@ -679,38 +982,136 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 //
                 // },
                 //
-                // &TerminatorKind::Drop {
-                // location,
-                // target,
-                // unwind
-                // } => {
+                // &TerminatorKind::Drop { location, target, unwind } => {
                 //
                 // },
                 //
-                // &TerminatorKind::DropAndReplace {
-                // location,
-                // value,
-                // target,
-                // unwind,
-                // } => {
+                // &TerminatorKind::DropAndReplace { location, value, target, unwind } => {
                 //
                 // },
                 //
-                // &TerminatorKind::Call {
-                // func,
-                // args,
-                // destination,
-                // cleanup
-                // } => {
-                //
-                // },
+                &TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
+                    let func_op = self.trans_operand(block, func);
+                    match func_op {
+                        SpirvOperand::FnCall(def_id) => {
+                            let func_id = self.tcx.map.as_local_node_id(def_id).expect("Function is not in local crate!");
+                            let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(func_id));
+
+                            let intrinsic = attrs.iter().find(|attr| match *attr {
+                                &InspirvAttribute::Intrinsic { .. } => true,
+                                _ => false,
+                            });
+
+                            println!("{:?}",intrinsic);
+
+                            let (lvalue, next_block) = destination.clone().expect("Call without destination, interesting!");
+                            let lvalue =  self.resolve_lvalue(&lvalue).map(|lvalue| self.transform_lvalue(block, lvalue)).expect("Unhandled lvalue");
+
+                            let args_ops = args.iter().map(|arg| self.trans_operand(block, arg)).collect::<Vec<_>>();
+                            let const_only = args_ops.iter().all(|arg| match arg { &SpirvOperand::Constant(..) => true, _ => false });
+                            let component_ids = args_ops.iter().filter_map(
+                                                    |arg| match arg {
+                                                        &SpirvOperand::Constant(c) => Some(c),
+                                                        &SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
+                                                            let op_id = self.builder.alloc_id();
+                                                            block.instructions.push(
+                                                                core_instruction::OpLoad(self.builder.define_type(op_ty), op_id, op_ptr_id, None).into()
+                                                            );
+                                                            Some(op_id)
+                                                        }
+                                                        _ => None
+                                                    }).collect::<Vec<_>>();
+
+                            // Translate function call
+                            let id = if let Some(&InspirvAttribute::Intrinsic { ref name }) = intrinsic {
+                                // Explicit handling of intrinsic functions!
+                                match name.as_str() {
+                                    "float2_new" => {
+                                        let ty = Type::Vector(Box::new(Type::Float(32)), 2);
+                                        if const_only {
+                                            self.builder.define_constant(
+                                                module::Constant::Composite(
+                                                    ty,
+                                                    component_ids,
+                                                )
+                                            )
+                                        } else {
+                                            let composite_id = self.builder.alloc_id();
+                                            block.instructions.push(
+                                                core_instruction::OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids).into()
+                                            );
+                                            composite_id
+                                        }
+                                    },
+
+                                    "float3_new" => {
+                                        let ty = Type::Vector(Box::new(Type::Float(32)), 3);
+                                        if const_only {
+                                            self.builder.define_constant(
+                                                module::Constant::Composite(
+                                                    ty,
+                                                    component_ids,
+                                                )
+                                            )
+                                        } else {
+                                            let composite_id = self.builder.alloc_id();
+                                            block.instructions.push(
+                                                core_instruction::OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids).into()
+                                            );
+                                            composite_id
+                                        }
+                                    },
+
+                                    "float4_new" => {
+                                        let ty = Type::Vector(Box::new(Type::Float(32)), 4);
+                                        if const_only {
+                                            self.builder.define_constant(
+                                                module::Constant::Composite(
+                                                    ty,
+                                                    component_ids,
+                                                )
+                                            )
+                                        } else {
+                                            let composite_id = self.builder.alloc_id();
+                                            block.instructions.push(
+                                                core_instruction::OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids).into()
+                                            );
+                                            composite_id
+                                        }
+                                    },
+
+                                    _ => bug!("Unknown function call intrinsic"),
+                                }
+                            } else {
+                                panic!("Unhandled function call")  // TODO: normal function call
+                            };
+
+                            // Store return value into lvalue destination
+                            match lvalue {
+                                SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return(lvalue_id, lvalue_ty) => {
+                                    block.instructions.push(core_instruction::OpStore(lvalue_id, id, None).into());
+                                },
+
+                                SpirvLvalue::Ignore => (),
+
+                                _ => self.tcx.sess.span_err(bb.terminator().source_info.span, "inspirv: Unhandled lvalue for call terminator!"),
+                            }
+
+                            block.branch_instr = Some(BranchInstruction::Branch(core_instruction::OpBranch(block_labels[next_block])));
+                        }
+
+                        _ => bug!("Unexpected operand type, expected `FnCall` ({:?})", func_op),
+                    }
+                },
                 //
 
                 &TerminatorKind::Assert { ref target, .. } => {
+                    // Ignore the actual asset
+                    // TODO: correct behaviour? some conditions?
                     block.branch_instr = Some(BranchInstruction::Branch(core_instruction::OpBranch(block_labels[*target])));
                 },
                 
-                _ => { println!("Unhandled terminator kind: {:?}", bb.terminator().kind); ()}, //unimplemented!(),
+                _ => { println!("Unhandled terminator kind: {:?}", bb.terminator().kind); }, //unimplemented!(),
             }
         }
 
@@ -739,9 +1140,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             ty::TyFloat(FloatTy::F32) => Type::Float(32),
             ty::TyFloat(FloatTy::F64) => Type::Float(64),
             ty::TyArray(ty, len) => unimplemented!(),
-            ty::TyTuple(ref tys) => {
-                Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect())
-            }
+            ty::TyTuple(&[]) => Type::Void,
+            ty::TyTuple(ref tys) => Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect()),
             ty::TyStruct(ref adt, ref subs) => {
                 // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
                 // Dont know how to correctly retrieve this information for non-local crates!
@@ -752,14 +1152,22 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     _ => false,
                 });
 
-                if let Some(&InspirvAttribute::Vector{ ref base, components }) = internal_type {
-                    Type::Vector(base.clone(), components as u32)
+                if let Some(ref internal_type) = internal_type {
+                    match *internal_type {
+                        &InspirvAttribute::Vector { ref base, components } => Type::Vector(base.clone(), components as u32),
+                        _ => bug!("Unhandled internal type ({:?})", *internal_type),
+                    }
                 } else {
-                    Type::Void // TODO: testing only
-                }
-            }
-
+                    // an actual struct!
+                    // TODO: handle names
+                    Type::Struct(adt.struct_variant().fields.iter().map(|field| self.rust_ty_to_inspirv(field.ty(*self.tcx, subs))).collect())
+                }    
+            },
             ty::TyRawPtr(..) => { println!("{:?}", t.sty); unimplemented!() },
+
+            // Some weird case, appearing sometimes in the code for whatever reason
+            // Often as unused temporary variables, which are never really used
+            ty::TyNever => Type::Void,
 
             _ => { println!("{:?}", t.sty); unimplemented!() },
             // TyEnum(AdtDef<'tcx>, &'tcx Substs<'tcx>),

@@ -3,6 +3,7 @@
     custom_attribute,
     question_mark,
     rustc_private,
+    slice_patterns,
 )]
 
 #[macro_use]
