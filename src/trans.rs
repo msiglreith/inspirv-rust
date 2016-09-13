@@ -108,6 +108,15 @@ enum SpirvOperand {
     None, // TODO: temp
 }
 
+impl SpirvOperand {
+    fn is_constant(&self) -> bool {
+        match self {
+            &SpirvOperand::Constant(..) => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum SpirvLvalue {
     Variable(Id, Type, StorageClass),
@@ -339,7 +348,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     }
                 }
 
-                _ => (), // ignore non `#[inspirv(..)]` attributes
+                _ => (), // ignore non-`#[inspirv(..)]` attributes
             }
         }
 
@@ -408,6 +417,18 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 SpirvLvalue::Variable(chain_id, ty.clone(), storage_class)
             },
             _ => lvalue
+        }
+    }
+
+    fn extract_u32_from_operand(&mut self, operand: &Operand<'tcx>) -> u32 {
+        match *operand {
+            Operand::Constant(ref c) => {
+                match c.literal {
+                    Literal::Value { value: ConstVal::Integral(ConstInt::U32(v)) } => v,
+                    _ => bug!("Expected u32 constant `{:?}", operand)
+                }
+            }
+            _ => bug!("Expected constant operand `{:?}`", operand)
         }
     }
 
@@ -894,25 +915,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 SpirvLvalue::Interface(ref interfaces, _) => {
                                     match *rvalue {
                                         Rvalue::Use(ref _operand) => {
-                                            /*
-                                            let op = self.trans_operand(block, operand);
-                                            match op {
-                                                SpirvOperand::Constant(op_id) => {
-                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
-                                                }
-                                                SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty)) => {
-                                                    let op_id = self.builder.alloc_id();
-                                                    block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
-                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
-                                                }
-                                                SpirvOperand::Consume(SpirvLvalue::Interface(..)) => self.tcx.sess.span_err(stmt.source_info.span,
-                                                                   "inspirv: Unsupported rvalue interface (so far)!"),
-                                                _ => self.tcx.sess.span_err(stmt.source_info.span,
-                                                                   "inspirv: Unsupported rvalue!"),
-                                            }
-                                            */
+                                            // TODO:
                                             self.tcx.sess.span_warn(stmt.source_info.span,
-                                                        "inspirv: Unhandled assignment for interfaces (soon)!")
+                                                        "inspirv: Unhandled use-assignment for interfaces (soon)!")
                                         }
 
                                         Rvalue::Aggregate(ref kind, ref operands) => {
@@ -966,30 +971,13 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                         Some(BranchInstruction::Unreachable(core_instruction::OpUnreachable));
                 }
 
-                // &TerminatorKind::If { cond, targets } => {
-                //
-                // },
-                //
-                // &TerminatorKind::Switch { discr, adt_def, targets } => {
-                //
-                // },
-                //
-                // &TerminatorKind::SwitchInt { discr, switch_ty, values, targets } => {
-                //
-                // },
-                //
-                // &TerminatorKind::Resume => {
-                //
-                // },
-                //
-                // &TerminatorKind::Drop { location, target, unwind } => {
-                //
-                // },
-                //
-                // &TerminatorKind::DropAndReplace { location, value, target, unwind } => {
-                //
-                // },
-                //
+                // &TerminatorKind::If { cond, targets } => { },
+                // &TerminatorKind::Switch { discr, adt_def, targets } => { },
+                // &TerminatorKind::SwitchInt { discr, switch_ty, values, targets } => { },
+                // &TerminatorKind::Resume => { },
+                // &TerminatorKind::Drop { location, target, unwind } => { },
+                // &TerminatorKind::DropAndReplace { location, value, target, unwind } => { },
+
                 &TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
                     let func_op = self.trans_operand(block, func);
                     match func_op {
@@ -1008,7 +996,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                             let lvalue =  self.resolve_lvalue(&lvalue).map(|lvalue| self.transform_lvalue(block, lvalue)).expect("Unhandled lvalue");
 
                             let args_ops = args.iter().map(|arg| self.trans_operand(block, arg)).collect::<Vec<_>>();
-                            let const_only = args_ops.iter().all(|arg| match arg { &SpirvOperand::Constant(..) => true, _ => false });
                             let component_ids = args_ops.iter().filter_map(
                                                     |arg| match arg {
                                                         &SpirvOperand::Constant(c) => Some(c),
@@ -1028,7 +1015,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 match name.as_str() {
                                     "float2_new" => {
                                         let ty = Type::Vector(Box::new(Type::Float(32)), 2);
-                                        if const_only {
+                                        if args_ops.iter().all(|arg| arg.is_constant()) {
+                                            // all args are constants!
                                             self.builder.define_constant(
                                                 module::Constant::Composite(
                                                     ty,
@@ -1042,11 +1030,11 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                             );
                                             composite_id
                                         }
-                                    },
-
+                                    }
                                     "float3_new" => {
                                         let ty = Type::Vector(Box::new(Type::Float(32)), 3);
-                                        if const_only {
+                                        if args_ops.iter().all(|arg| arg.is_constant()) {
+                                            // all args are constants!
                                             self.builder.define_constant(
                                                 module::Constant::Composite(
                                                     ty,
@@ -1060,11 +1048,11 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                             );
                                             composite_id
                                         }
-                                    },
-
+                                    }
                                     "float4_new" => {
                                         let ty = Type::Vector(Box::new(Type::Float(32)), 4);
-                                        if const_only {
+                                        if args_ops.iter().all(|arg| arg.is_constant()) {
+                                            // all args are constants!
                                             self.builder.define_constant(
                                                 module::Constant::Composite(
                                                     ty,
@@ -1078,9 +1066,131 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                             );
                                             composite_id
                                         }
-                                    },
-
-                                    _ => bug!("Unknown function call intrinsic"),
+                                    }
+                                    "float4_swizzle2" => {
+                                        let ty = Type::Vector(Box::new(Type::Float(32)), 2);
+                                        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
+                                            // all args are constants!
+                                            let result_id = self.builder.alloc_id();
+                                            // components
+                                            let comp_x = self.extract_u32_from_operand(&args[1]);
+                                            if comp_x >= 2 { bug!{"inspirv: `float4_swizzle2` component `x` out of range {:?}", comp_x} }
+                                            let comp_y = self.extract_u32_from_operand(&args[2]);
+                                            if comp_y >= 2 { bug!{"inspirv: `float4_swizzle2` component `y` out of range {:?}", comp_y} }
+                                            block.instructions.push(
+                                                core_instruction::OpVectorShuffle(
+                                                    self.builder.define_type(&ty),
+                                                    result_id,
+                                                    component_ids[0],
+                                                    component_ids[0],
+                                                    vec![
+                                                        LiteralInteger(comp_x),
+                                                        LiteralInteger(comp_y),
+                                                    ],
+                                                ).into()
+                                            );
+                                            result_id
+                                        } else {
+                                            panic!("Unhandled dynamic `float4_swizzle2`")
+                                        }
+                                    }
+                                    "float4_swizzle3" => {
+                                        let ty = Type::Vector(Box::new(Type::Float(32)), 3);
+                                        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
+                                            // all args are constants!
+                                            let result_id = self.builder.alloc_id();
+                                            // components
+                                            let comp_x = self.extract_u32_from_operand(&args[1]);
+                                            if comp_x >= 3 { bug!{"inspirv: `float4_swizzle3` component `x` out of range {:?}", comp_x} }
+                                            let comp_y = self.extract_u32_from_operand(&args[2]);
+                                            if comp_y >= 3 { bug!{"inspirv: `float4_swizzle3` component `y` out of range {:?}", comp_y} }
+                                            let comp_z = self.extract_u32_from_operand(&args[3]);
+                                            if comp_z >= 3 { bug!{"inspirv: `float4_swizzle3` component `z` out of range {:?}", comp_z} }
+                                            block.instructions.push(
+                                                core_instruction::OpVectorShuffle(
+                                                    self.builder.define_type(&ty),
+                                                    result_id,
+                                                    component_ids[0],
+                                                    component_ids[0],
+                                                    vec![
+                                                        LiteralInteger(comp_x),
+                                                        LiteralInteger(comp_y),
+                                                        LiteralInteger(comp_z),
+                                                    ],
+                                                ).into()
+                                            );
+                                            result_id
+                                        } else {
+                                            panic!("Unhandled dynamic `float4_swizzle3`")
+                                        }
+                                    }
+                                    "float4_swizzle4" => {
+                                        let ty = Type::Vector(Box::new(Type::Float(32)), 4);
+                                        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
+                                            // all args are constants!
+                                            let result_id = self.builder.alloc_id();
+                                            // components
+                                            let comp_x = self.extract_u32_from_operand(&args[1]);
+                                            if comp_x >= 4 { bug!{"inspirv: `float4_swizzle3` component `x` out of range {:?}", comp_x} }
+                                            let comp_y = self.extract_u32_from_operand(&args[2]);
+                                            if comp_y >= 4 { bug!{"inspirv: `float4_swizzle3` component `y` out of range {:?}", comp_y} }
+                                            let comp_z = self.extract_u32_from_operand(&args[3]);
+                                            if comp_z >= 4 { bug!{"inspirv: `float4_swizzle3` component `z` out of range {:?}", comp_z} }
+                                            let comp_w = self.extract_u32_from_operand(&args[4]);
+                                            if comp_w >= 4 { bug!{"inspirv: `float4_swizzle3` component `w` out of range {:?}", comp_w} }
+                                            block.instructions.push(
+                                                core_instruction::OpVectorShuffle(
+                                                    self.builder.define_type(&ty),
+                                                    result_id,
+                                                    component_ids[0],
+                                                    component_ids[0],
+                                                    vec![
+                                                        LiteralInteger(comp_x),
+                                                        LiteralInteger(comp_y),
+                                                        LiteralInteger(comp_z),
+                                                        LiteralInteger(comp_w),
+                                                    ],
+                                                ).into()
+                                            );
+                                            result_id
+                                        } else {
+                                            panic!("Unhandled dynamic `float4_swizzle4`")
+                                        }
+                                    }
+                                    "shuffle4" => {
+                                        let ty = Type::Vector(Box::new(Type::Float(32)), 2);
+                                        if args_ops[2..].iter().all(|arg| arg.is_constant()) {
+                                            // all args are constants!
+                                            let result_id = self.builder.alloc_id();
+                                            // components
+                                            let comp_x = self.extract_u32_from_operand(&args[2]);
+                                            if comp_x >= 4 { bug!{"inspirv: `shuffle4` component `x` out of range {:?}", comp_x} }
+                                            let comp_y = self.extract_u32_from_operand(&args[3]);
+                                            if comp_y >= 4 { bug!{"inspirv: `shuffle4` component `y` out of range {:?}", comp_y} }
+                                            let comp_z = self.extract_u32_from_operand(&args[4]);
+                                            if comp_z >= 4 { bug!{"inspirv: `shuffle4` component `z` out of range {:?}", comp_z} }
+                                            let comp_w = self.extract_u32_from_operand(&args[5]);
+                                            if comp_w >= 4 { bug!{"inspirv: `shuffle4` component `w` out of range {:?}", comp_w} }
+                                            block.instructions.push(
+                                                core_instruction::OpVectorShuffle(
+                                                    self.builder.define_type(&ty),
+                                                    result_id,
+                                                    component_ids[1],
+                                                    component_ids[2],
+                                                    vec![
+                                                        LiteralInteger(comp_x),
+                                                        LiteralInteger(comp_y),
+                                                        LiteralInteger(comp_z),
+                                                        LiteralInteger(comp_w),
+                                                    ],
+                                                ).into()
+                                            );
+                                            result_id
+                                        } else {
+                                            panic!("Unhandled dynamic `shuffle4`")
+                                        }
+                                    }
+                                    _ => bug!("Unknown function call intrinsic")
                                 }
                             } else {
                                 panic!("Unhandled function call")  // TODO: normal function call
