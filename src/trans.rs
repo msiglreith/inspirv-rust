@@ -30,6 +30,7 @@ const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|pa
 #[derive(Clone, Debug)]
 enum InspirvAttribute {
     Interface,
+    ConstBuffer,
     Location {
         location: u64,
     },
@@ -120,7 +121,7 @@ impl SpirvOperand {
 #[derive(Clone, Debug)]
 enum SpirvLvalue {
     Variable(Id, Type, StorageClass),
-    Interface(Vec<(Id, Type)>, StorageClass),
+    SignatureStruct(Vec<(Id, Type)>, StorageClass), // struct objects passed to functions, e.g. interfaces, constant buffer, ..
     AccessChain(Id, StorageClass, Vec<Id>, Type),
     Return(Id, Type),
     Ignore, // Ignore this lvalue, e.g. return = ()
@@ -130,6 +131,7 @@ enum SpirvLvalue {
 enum FuncArg {
     Argument(Argument),
     Interface(Vec<(Id, Type)>),
+    ConstBuffer(Vec<(Id, Type)>),
 }
 
 #[derive(Clone)]
@@ -276,6 +278,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                         match &**name {
                                             "compiler_builtin" => attrs.push(InspirvAttribute::CompilerBuiltin),
                                             "interface" => attrs.push(InspirvAttribute::Interface),
+                                            "const_buffer" => attrs.push(InspirvAttribute::ConstBuffer),
                                             _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv`attribute word item"),
                                         }
                                     },
@@ -362,7 +365,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 if let Some(arg) = self.arg_ids[id].clone() {
                     match arg {
                         FuncArg::Argument(arg) => Some(SpirvLvalue::Variable(arg.id, arg.ty, StorageClass::StorageClassFunction)),
-                        FuncArg::Interface(interfaces) => Some(SpirvLvalue::Interface(interfaces, StorageClass::StorageClassInput)),
+                        FuncArg::Interface(interfaces) => Some(SpirvLvalue::SignatureStruct(interfaces, StorageClass::StorageClassInput)),
+                        FuncArg::ConstBuffer(consts) => None, // TODO: High
                     }
                 } else {
                     Some(SpirvLvalue::Ignore) // unnamed argument `_`
@@ -379,7 +383,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             Lvalue::ReturnPointer => {
                 match self.return_ids {
                     Some(FuncReturn::Return(ref var)) => Some(SpirvLvalue::Return(var.id, var.ty.clone())),
-                    Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::Interface(interfaces.clone(), StorageClass::StorageClassOutput)),
+                    Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::SignatureStruct(interfaces.clone(), StorageClass::StorageClassOutput)),
                     None => Some(SpirvLvalue::Ignore),
                 }
             }
@@ -390,7 +394,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             Lvalue::Projection(ref proj) => {
                 if let Some(base) = self.resolve_lvalue(&proj.base) {
                     match (&proj.elem, &base) {
-                        (&ProjectionElem::Field(field, _), &SpirvLvalue::Interface(ref interfaces, storage_class)) => {
+                        (&ProjectionElem::Field(field, _), &SpirvLvalue::SignatureStruct(ref interfaces, storage_class)) => {
                             let var = interfaces[field.index()].clone();
                             Some(SpirvLvalue::Variable(var.0, var.1, storage_class))
                         }
@@ -577,13 +581,17 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                         let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
                         let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
 
-                        let interface = attrs.iter().find(|attr| match *attr {
-                            &InspirvAttribute::Interface => true,
-                            _ => false,
-                        });
+                        let interface = attrs.iter().any(|attr| match attr {
+                                &InspirvAttribute::Interface => true,
+                                _ => false,
+                            });
+                        let const_buffer = attrs.iter().any(|attr| match attr {
+                                &InspirvAttribute::ConstBuffer => true,
+                                _ => false,
+                            });
 
-                        if let Some(&InspirvAttribute::Interface) = interface {
-                            if let ty::TyStruct(ref adt, ref subs) = arg.ty.sty {
+                        if interface {
+                            if let ty::TyAdt(ref adt, ref subs) = arg.ty.sty {
                                 let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                     let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
                                     let name = format!("{}::{}", self.tcx.map.name(node_id), field.name.as_str());
@@ -630,13 +638,18 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
                             } else {
                                 bug!("Input argument type requires to be struct type ({:?})", arg.ty)
-                            }  
+                            }
+                        } else if const_buffer {
+                            if let ty::TyAdt(ref adt, ref subs) = arg.ty.sty {
+
+                            } else {
+                                bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
+                            }
                         } else {
-                            // Entry Point Handling
-                            // These functions don't have actual input/output parameters
-                            // We use them for the shader interface and uniforms
+                            // Entrypoint functions don't have actual input/output parameters
+                            // We use them for the shader interface and const buffers
                             if entry_point.is_some() {
-                                bug!("Input argument type requires interface attribute({:?})", arg.ty)
+                                bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
                             } else {
                                 let id = self.builder.alloc_id();
                                 let arg = Argument {
@@ -674,17 +687,17 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 // This required handling of the different attributes attached to the parameter types
                 // Return type as Output interface
                 match mir.return_ty.sty {
-                    ty::TyStruct(ref adt, ref subs) => {
+                    ty::TyAdt(ref adt, ref subs) => {
                         if let Some(ty_id) = mir.return_ty.ty_to_def_id() {
                             let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
                             let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
 
-                            let interface = attrs.iter().find(|attr| match *attr {
+                            let interface = attrs.iter().any(|attr| match attr {
                                 &InspirvAttribute::Interface => true,
                                 _ => false,
                             });
 
-                            if let Some(&InspirvAttribute::Interface) = interface {
+                            if interface {
                                 let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                     let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
                                     let name = format!("{}::{}", self.tcx.map.name(node_id), field.name.as_str());
@@ -844,7 +857,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                     block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
                                                     block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
                                                 }
-                                                SpirvOperand::Consume(SpirvLvalue::Interface(ref interfaces, _)) => {
+                                                SpirvOperand::Consume(SpirvLvalue::SignatureStruct(ref interfaces, _)) => {
                                                     let ids = interfaces.iter().map(|interface| {
                                                         let id = self.builder.alloc_id();
                                                         block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&interface.1), id, interface.0, None).into());
@@ -936,7 +949,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                     }
                                 }
 
-                                SpirvLvalue::Interface(ref interfaces, _) => {
+                                SpirvLvalue::SignatureStruct(ref interfaces, _) => {
                                     match *rvalue {
                                         Rvalue::Use(ref _operand) => {
                                             // TODO:
@@ -1239,7 +1252,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             ty::TyArray(ty, len) => unimplemented!(),
             ty::TyTuple(&[]) => Type::Void,
             ty::TyTuple(ref tys) => Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect()),
-            ty::TyStruct(ref adt, ref subs) => {
+            ty::TyAdt(ref adt, ref subs) => {
                 // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
                 // Dont know how to correctly retrieve this information for non-local crates!
                 let node_id = self.tcx.map.as_local_node_id(adt.did).unwrap();
