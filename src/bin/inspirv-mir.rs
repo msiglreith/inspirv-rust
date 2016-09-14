@@ -68,7 +68,7 @@ fn main() {
         }
     }
 
-    match rustc_driver::run_compiler(&rustc_args[1..], &mut SpirvCompilerCalls) {
+    match rustc_driver::run_compiler(&rustc_args, &mut SpirvCompilerCalls) {
         (Ok(_), _) => process::exit(0),
         (Err(code), _) => { println!("error: {:?}", code); process::exit(code as i32) },
     }

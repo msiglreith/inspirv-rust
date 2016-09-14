@@ -12,15 +12,14 @@ use rustc::util::common::time;
 use rustc_borrowck as borrowck;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use syntax;
-use syntax::ast::{NodeId, IntTy, UintTy, FloatTy, MetaItemKind, NestedMetaItemKind};
+use syntax::ast::{LitKind, LitIntType, NodeId, IntTy, UintTy, FloatTy, MetaItemKind, NestedMetaItemKind};
 use std::collections::HashMap;
 use std::fs::File;
-use monomorphize;
 use inspirv;
 use inspirv::types::*;
 use inspirv::core::instruction as core_instruction;
 use inspirv::core::enumeration::*;
-use inspirv::instruction::{Instruction, BranchInstruction};
+use inspirv::instruction::BranchInstruction;
 use inspirv_builder::function::{Argument, LocalVar, Block};
 use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueFloat};
 
@@ -78,17 +77,17 @@ pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
     time(time_passes,
          "translation",
-         move || trans_crate(tcx, &mir_map, analysis));
+         move || trans_crate(tcx, mir_map, analysis));
 }
 
 fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                          mir_map: &MirMap<'tcx>,
-                         analysis: &ty::CrateAnalysis) {
+                         _analysis: &ty::CrateAnalysis) {
     let mut builder = ModuleBuilder::new();
     builder.with_source(SourceLanguage::SourceLanguageUnknown, VERSION_INSPIRV_RUST);
 
     let mut v = InspirvModuleCtxt {
-        tcx: &tcx,
+        tcx: tcx,
         mir_map: mir_map,
         builder: builder,
 
@@ -111,8 +110,8 @@ enum SpirvOperand {
 
 impl SpirvOperand {
     fn is_constant(&self) -> bool {
-        match self {
-            &SpirvOperand::Constant(..) => true,
+        match *self {
+            SpirvOperand::Constant(..) => true,
             _ => false,
         }
     }
@@ -214,8 +213,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
                                             "location" => {
                                                 match value.node {
-                                                    syntax::ast::LitKind::Int(b, _) if b >= 0 => attrs.push(InspirvAttribute::Location { location: b }),
-                                                    _ => panic!("attribute value need to be valid interger"),
+                                                    LitKind::Int(b, LitIntType::Unsigned(..)) | LitKind::Int(b, LitIntType::Unsuffixed) => attrs.push(InspirvAttribute::Location { location: b }),
+                                                    _ => panic!("attribute value need to be valid unsigned interger"),
                                                 };
                                             },
 
@@ -366,7 +365,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     match arg {
                         FuncArg::Argument(arg) => Some(SpirvLvalue::Variable(arg.id, arg.ty, StorageClass::StorageClassFunction)),
                         FuncArg::Interface(interfaces) => Some(SpirvLvalue::SignatureStruct(interfaces, StorageClass::StorageClassInput)),
-                        FuncArg::ConstBuffer(consts) => None, // TODO: High
+                        FuncArg::ConstBuffer(_consts) => None, // TODO: High
                     }
                 } else {
                     Some(SpirvLvalue::Ignore) // unnamed argument `_`
@@ -387,7 +386,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     None => Some(SpirvLvalue::Ignore),
                 }
             }
-            Lvalue::Static(def_id) => {
+            Lvalue::Static(_def_id) => {
                 println!("inspirv: unsupported lvalue {:?}", lvalue);
                 None
             }
@@ -490,7 +489,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::I64(v))))
                             }
-                            ConstVal::Integral(ConstInt::Isize(v)) => SpirvOperand::None,
+                            ConstVal::Integral(ConstInt::Isize(_v)) => SpirvOperand::None,
                             // {
                             // SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Isize(v))))
                             // },
@@ -510,18 +509,18 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::U64(v))))
                             }
-                            ConstVal::Integral(ConstInt::Usize(v)) => SpirvOperand::None,
+                            ConstVal::Integral(ConstInt::Usize(_v)) => SpirvOperand::None,
                             // {
                             // SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Usize(v))))
                             // },
                             ConstVal::Bool(val) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Bool(val)))),
-                            ConstVal::Char(val) => SpirvOperand::None,
+                            ConstVal::Char(_val) => SpirvOperand::None,
                             ConstVal::Integral(ConstInt::Infer(_)) |
                             ConstVal::Integral(ConstInt::InferSigned(_)) => {
                                 bug!("MIR must not use `{:?}`", c.literal)
                             }
-                            ConstVal::Str(ref v) => SpirvOperand::None, // TODO: unsupported
-                            ConstVal::ByteStr(ref v) => SpirvOperand::None, // TODO: unsupported?
+                            ConstVal::Str(_) => SpirvOperand::None, // TODO: unsupported
+                            ConstVal::ByteStr(ref _v) => SpirvOperand::None, // TODO: unsupported?
                             ConstVal::Struct(_) |
                             ConstVal::Tuple(_) |
                             ConstVal::Array(..) |
@@ -533,7 +532,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                             ConstVal::Dummy => bug!(),
                         }
                     }
-                    Literal::Promoted { ref index } => SpirvOperand::None,
+                    Literal::Promoted { .. /* ref index */ } => SpirvOperand::None,
                 }
             }
         }
@@ -553,15 +552,15 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(id));
 
             // We don't translate builtin functions, these will be handled internally
-            if attrs.iter().any(|attr| match attr { &InspirvAttribute::CompilerBuiltin | &InspirvAttribute::Intrinsic {..} => true, _ => false }) {
+            if attrs.iter().any(|attr| match *attr { InspirvAttribute::CompilerBuiltin | InspirvAttribute::Intrinsic {..} => true, _ => false }) {
                 return;
             }
 
             let fn_name = &*self.tcx.map.name(id).as_str();
 
             // check if we have an entry point
-            let entry_point = attrs.iter().find(|attr| match *attr {
-                &InspirvAttribute::EntryPoint { .. } => true,
+            let entry_point = attrs.iter().find(|attr| match **attr {
+                InspirvAttribute::EntryPoint { .. } => true,
                 _ => false,
             });
 
@@ -574,108 +573,102 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 let name = &*arg.debug_name.as_str();
                 if name.is_empty() {
                     self.arg_ids.push(None);
-                } else {
+                } else if let Some(ty_id) = arg.ty.ty_to_def_id() {
                     // TODO: low-mid: unsafe! We would like to find the attributes of the current type
                     // Dont know how to correctly retrieve this information for non-local crates!
-                    if let Some(ty_id) = arg.ty.ty_to_def_id() {
-                        let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
-                        let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
+                    let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
+                    let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
 
-                        let interface = attrs.iter().any(|attr| match attr {
-                                &InspirvAttribute::Interface => true,
-                                _ => false,
-                            });
-                        let const_buffer = attrs.iter().any(|attr| match attr {
-                                &InspirvAttribute::ConstBuffer => true,
-                                _ => false,
-                            });
+                    let interface = attrs.iter().any(|attr| match *attr {
+                            InspirvAttribute::Interface => true,
+                            _ => false,
+                        });
+                    let const_buffer = attrs.iter().any(|attr| match *attr {
+                            InspirvAttribute::ConstBuffer => true,
+                            _ => false,
+                        });
 
-                        if interface {
-                            if let ty::TyAdt(ref adt, ref subs) = arg.ty.sty {
-                                let interfaces = adt.struct_variant().fields.iter().map(|field| {
-                                    let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
-                                    let name = format!("{}::{}", self.tcx.map.name(node_id), field.name.as_str());
-                                    let id = self.builder.define_variable(name.as_str(), ty.clone(),
-                                                                 StorageClass::StorageClassInput);
+                    if interface {
+                        if let ty::TyAdt(adt, subs) = arg.ty.sty {
+                            let interfaces = adt.struct_variant().fields.iter().map(|field| {
+                                let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
+                                let name = format!("{}::{}", self.tcx.map.name(node_id), field.name.as_str());
+                                let id = self.builder.define_variable(name.as_str(), ty.clone(),
+                                                             StorageClass::StorageClassInput);
 
-                                    // HELP! A nicer way to get the attributes?
-                                    // Get struct field attributes
-                                    let node = self.tcx.map.get(node_id);
-                                    let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
-                                    let field_attrs = {
-                                        if let hir::map::Node::NodeItem(ref item) = node {
-                                            if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
-                                                let field = variant_data.fields().iter()
-                                                                        .find(|field| field.id == field_id)
-                                                                        .expect("Unable to find struct field by id");
-                                                self.parse_inspirv_attributes(&*field.attrs)
-                                            } else {
-                                                bug!("Struct item node should be a struct {:?}", item.node)
-                                            }
+                                // HELP! A nicer way to get the attributes?
+                                // Get struct field attributes
+                                let node = self.tcx.map.get(node_id);
+                                let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
+                                let field_attrs = {
+                                    if let hir::map::Node::NodeItem(item) = node {
+                                        if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
+                                            let field = variant_data.fields().iter()
+                                                                    .find(|field| field.id == field_id)
+                                                                    .expect("Unable to find struct field by id");
+                                            self.parse_inspirv_attributes(&*field.attrs)
                                         } else {
-                                            bug!("Struct node should be a NodeItem {:?}", node)
+                                            bug!("Struct item node should be a struct {:?}", item.node)
                                         }
-                                    };
-
-                                    for attr in field_attrs {
-                                        match attr {
-                                            InspirvAttribute::Location { location } => {
-                                                self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
-                                            }
-                                            // Rust doesn't allow attributes associated with `type foo = bar` /:
-                                            InspirvAttribute::Builtin { builtin } => {
-                                                // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
-                                                self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
-                                            }
-                                            _ => ()
-                                        }
+                                    } else {
+                                        bug!("Struct node should be a NodeItem {:?}", node)
                                     }
-
-                                    interface_ids.push(id);
-                                    (id, ty)
-                                }).collect::<Vec<_>>();
-
-                                self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
-                            } else {
-                                bug!("Input argument type requires to be struct type ({:?})", arg.ty)
-                            }
-                        } else if const_buffer {
-                            if let ty::TyAdt(ref adt, ref subs) = arg.ty.sty {
-
-                            } else {
-                                bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
-                            }
-                        } else {
-                            // Entrypoint functions don't have actual input/output parameters
-                            // We use them for the shader interface and const buffers
-                            if entry_point.is_some() {
-                                bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
-                            } else {
-                                let id = self.builder.alloc_id();
-                                let arg = Argument {
-                                    id: id,
-                                    ty: self.rust_ty_to_inspirv(arg.ty),
                                 };
-                                params.push(arg.clone());
-                                self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
-                                self.arg_ids.push(Some(FuncArg::Argument(arg)));
-                            }
-                        }
-                    } else {
-                        if entry_point.is_some() {
-                            bug!("Argument type not defined in local crate({:?})", arg.ty)
+
+                                for attr in field_attrs {
+                                    match attr {
+                                        InspirvAttribute::Location { location } => {
+                                            self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
+                                        }
+                                        // Rust doesn't allow attributes associated with `type foo = bar` /:
+                                        InspirvAttribute::Builtin { builtin } => {
+                                            // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
+                                            self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
+                                        }
+                                        _ => ()
+                                    }
+                                }
+
+                                interface_ids.push(id);
+                                (id, ty)
+                            }).collect::<Vec<_>>();
+
+                            self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
                         } else {
-                            //
-                            let id = self.builder.alloc_id();
-                            let arg = Argument {
-                                id: id,
-                                ty: self.rust_ty_to_inspirv(arg.ty),
-                            };
-                            params.push(arg.clone());
-                            self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
-                            self.arg_ids.push(Some(FuncArg::Argument(arg)));
+                            bug!("Input argument type requires to be struct type ({:?})", arg.ty)
                         }
+                    } else if const_buffer {
+                        if let ty::TyAdt(_adt, _subs) = arg.ty.sty {
+
+                        } else {
+                            bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
+                        }
+                    } else if entry_point.is_some() {
+                        // Entrypoint functions don't have actual input/output parameters
+                        // We use them for the shader interface and const buffers
+                        bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
+                    } else {
+                        let id = self.builder.alloc_id();
+                        let arg = Argument {
+                            id: id,
+                            ty: self.rust_ty_to_inspirv(arg.ty),
+                        };
+                        params.push(arg.clone());
+                        self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
+                        self.arg_ids.push(Some(FuncArg::Argument(arg)));
                     }
+                } else if entry_point.is_some() {
+                    bug!("Argument type not defined in local crate({:?})", arg.ty)
+                } else {
+                    //
+                    let id = self.builder.alloc_id();
+                    let arg = Argument {
+                        id: id,
+                        ty: self.rust_ty_to_inspirv(arg.ty),
+                    };
+                    params.push(arg.clone());
+                    self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
+                    self.arg_ids.push(Some(FuncArg::Argument(arg)));
                 }
             }
 
@@ -687,13 +680,13 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 // This required handling of the different attributes attached to the parameter types
                 // Return type as Output interface
                 match mir.return_ty.sty {
-                    ty::TyAdt(ref adt, ref subs) => {
+                    ty::TyAdt(adt, subs) => {
                         if let Some(ty_id) = mir.return_ty.ty_to_def_id() {
                             let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
                             let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
 
-                            let interface = attrs.iter().any(|attr| match attr {
-                                &InspirvAttribute::Interface => true,
+                            let interface = attrs.iter().any(|attr| match *attr {
+                                InspirvAttribute::Interface => true,
                                 _ => false,
                             });
 
@@ -709,7 +702,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                     let node = self.tcx.map.get(node_id);
                                     let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
                                     let field_attrs = {
-                                        if let hir::map::Node::NodeItem(ref item) = node {
+                                        if let hir::map::Node::NodeItem(item) = node {
                                             if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
                                                 let field = variant_data.fields().iter()
                                                                         .find(|field| field.id == field_id)
@@ -825,7 +818,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
         // Translate blocks
         let mut block_labels: IndexVec<BasicBlock, Id> = IndexVec::new();
-        for (i, _) in mir.basic_blocks().iter().enumerate() {
+        for _ in mir.basic_blocks().iter() {
             let block = fn_module.add_block(self.builder.alloc_id());
             block_labels.push(block.label);
         }
@@ -873,7 +866,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                         }
 
                                         /// [x; 32]
-                                        Rvalue::Repeat(ref operand, ref times) => {}
+                                        Rvalue::Repeat(ref _operand, ref _times) => {}
 
                                         Rvalue::Ref(_, _, _) => {
                                             self.tcx.sess.span_err(stmt.source_info.span,
@@ -881,16 +874,16 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                         }
 
                                         /// length of a [X] or [X;n] value
-                                        Rvalue::Len(ref val) => {}
+                                        Rvalue::Len(_ /* ref val */) => {}
 
-                                        Rvalue::Cast(ref kind, ref operand, ref ty) => {
+                                        Rvalue::Cast(ref kind, ref operand, ty) => {
                                             if *kind != CastKind::Misc {
                                                 self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast kind!")
                                             } else {
                                                 let op = self.trans_operand(block, operand);
                                                 let cast_ty = self.rust_ty_to_inspirv(ty);
                                                 match op {
-                                                    SpirvOperand::Constant(op_id) => {
+                                                    SpirvOperand::Constant(_op_id) => {
                                                         // Why!? ):
                                                         self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported const cast rvalue (soon)!")
                                                         // block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
@@ -934,11 +927,12 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                         }
 
                                         Rvalue::UnaryOp(ref op, ref operand) => {
-                                            let operand = self.trans_operand(block, operand);
+                                            let _operand = self.trans_operand(block, operand);
                                             println!("unop: {:?}", op);
+                                            // TODO
                                         }
 
-                                        Rvalue::Aggregate(ref kind, ref operands) => {}
+                                        Rvalue::Aggregate(ref _kind, ref _operands) => {}
 
                                         Rvalue::Box(..) => {
                                             self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid box r-value")
@@ -957,7 +951,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                         "inspirv: Unhandled use-assignment for interfaces (soon)!")
                                         }
 
-                                        Rvalue::Aggregate(ref kind, ref operands) => {
+                                        Rvalue::Aggregate(ref _kind, ref operands) => {
                                             for (operand, interface) in operands.iter().zip(interfaces.iter()) {
                                                 let op = self.trans_operand(block, operand);
                                                 match op {
@@ -980,7 +974,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 }
 
                                 SpirvLvalue::Ignore => (),
-                                SpirvLvalue::AccessChain(root_id, storage_class, chain, ty) => unreachable!(),        
+                                SpirvLvalue::AccessChain(..) => unreachable!(),        
                             }
                         } else {
                             self.tcx.sess.span_warn(stmt.source_info.span, "inspirv: Unhandled stmnt as lvalue couldn't be resolved!");
@@ -992,18 +986,18 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 }
             }
 
-            match &bb.terminator().kind {
-                &TerminatorKind::Goto { ref target } => {
+            match bb.terminator().kind {
+                TerminatorKind::Goto { ref target } => {
                     block.branch_instr = Some(BranchInstruction::Branch(core_instruction::OpBranch(block_labels[*target])));
                 }
 
-                &TerminatorKind::Return => {
+                TerminatorKind::Return => {
                     // TODO: low: handle return value
                     block.branch_instr =
                         Some(BranchInstruction::Return(core_instruction::OpReturn));
                 }
 
-                &TerminatorKind::Unreachable => {
+                TerminatorKind::Unreachable => {
                     block.branch_instr =
                         Some(BranchInstruction::Unreachable(core_instruction::OpUnreachable));
                 }
@@ -1015,15 +1009,15 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 // &TerminatorKind::Drop { location, target, unwind } => { },
                 // &TerminatorKind::DropAndReplace { location, value, target, unwind } => { },
 
-                &TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
+                TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
                     let func_op = self.trans_operand(block, func);
                     match func_op {
                         SpirvOperand::FnCall(def_id) => {
                             let func_id = self.tcx.map.as_local_node_id(def_id).expect("Function is not in local crate!");
                             let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(func_id));
 
-                            let intrinsic = attrs.iter().find(|attr| match *attr {
-                                &InspirvAttribute::Intrinsic { .. } => true,
+                            let intrinsic = attrs.iter().find(|attr| match **attr {
+                                InspirvAttribute::Intrinsic { .. } => true,
                                 _ => false,
                             });
 
@@ -1041,7 +1035,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
                             // Store return value into lvalue destination
                             match lvalue {
-                                SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return(lvalue_id, lvalue_ty) => {
+                                SpirvLvalue::Variable(lvalue_id, _, _) | SpirvLvalue::Return(lvalue_id, _) => {
                                     block.instructions.push(core_instruction::OpStore(lvalue_id, id, None).into());
                                 },
 
@@ -1058,7 +1052,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 },
                 //
 
-                &TerminatorKind::Assert { ref target, .. } => {
+                TerminatorKind::Assert { ref target, .. } => {
                     // Ignore the actual asset
                     // TODO: correct behaviour? some conditions?
                     block.branch_instr = Some(BranchInstruction::Branch(core_instruction::OpBranch(block_labels[*target])));
@@ -1121,9 +1115,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn emit_intrinsic(&mut self, intrinsic: &str, block: &mut Block, args: &[Operand<'tcx>]) -> Id {
         let args_ops = args.iter().map(|arg| self.trans_operand(block, arg)).collect::<Vec<_>>();
         let component_ids = args_ops.iter().filter_map(
-                                |arg| match arg {
-                                    &SpirvOperand::Constant(c) => Some(c),
-                                    &SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
+                                |arg| match *arg {
+                                    SpirvOperand::Constant(c) => Some(c),
+                                    SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
                                         let op_id = self.builder.alloc_id();
                                         block.instructions.push(
                                             core_instruction::OpLoad(self.builder.define_type(op_ty), op_id, op_ptr_id, None).into()
@@ -1236,35 +1230,41 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn rust_ty_to_inspirv(&self, t: Ty<'tcx>) -> Type {
         match t.sty {
             ty::TyBool => Type::Bool,
-            ty::TyChar => Type::Int(8, false),
-            ty::TyInt(IntTy::Is) => Type::Int(32, true), // isize
             ty::TyInt(IntTy::I8) => Type::Int(8, true),
             ty::TyInt(IntTy::I16) => Type::Int(16, true),
-            ty::TyInt(IntTy::I32) => Type::Int(32, true),
+            ty::TyInt(IntTy::I32)
+            | ty::TyInt(IntTy::Is) => Type::Int(32, true), // isize
             ty::TyInt(IntTy::I64) => Type::Int(64, true),
-            ty::TyUint(UintTy::Us) => Type::Int(32, false), // usize
-            ty::TyUint(UintTy::U8) => Type::Int(8, false),
+            ty::TyUint(UintTy::U8)
+            | ty::TyChar => Type::Int(8, false),
             ty::TyUint(UintTy::U16) => Type::Int(16, false),
-            ty::TyUint(UintTy::U32) => Type::Int(32, false),
+            ty::TyUint(UintTy::U32)
+            | ty::TyUint(UintTy::Us) => Type::Int(32, false), // usize
             ty::TyUint(UintTy::U64) => Type::Int(64, false),
             ty::TyFloat(FloatTy::F32) => Type::Float(32),
             ty::TyFloat(FloatTy::F64) => Type::Float(64),
-            ty::TyArray(ty, len) => unimplemented!(),
-            ty::TyTuple(&[]) => Type::Void,
-            ty::TyTuple(ref tys) => Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect()),
-            ty::TyAdt(ref adt, ref subs) => {
+            ty::TyArray(_ty, _len) => unimplemented!(),
+            
+            // TyNever:
+            //  Some weird case, appearing sometimes in the code for whatever reason
+            //  Often as unused temporary variables, which are never really used
+            // TyTuple(&[]):
+            //  Rust seems to emit () instead of void for function return types
+            ty::TyNever | ty::TyTuple(&[]) => Type::Void,
+            ty::TyTuple(tys) => Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect()),
+            ty::TyAdt(adt, subs) => {
                 // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
                 // Dont know how to correctly retrieve this information for non-local crates!
                 let node_id = self.tcx.map.as_local_node_id(adt.did).unwrap();
                 let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
-                let internal_type = attrs.iter().find(|attr| match *attr {
-                    &InspirvAttribute::Vector { .. } => true,
+                let internal_type = attrs.iter().find(|attr| match **attr {
+                    InspirvAttribute::Vector { .. } => true,
                     _ => false,
                 });
 
-                if let Some(ref internal_type) = internal_type {
+                if let Some(internal_type) = internal_type {
                     match *internal_type {
-                        &InspirvAttribute::Vector { ref base, components } => Type::Vector(base.clone(), components as u32),
+                        InspirvAttribute::Vector { ref base, components } => Type::Vector(base.clone(), components as u32),
                         _ => bug!("Unhandled internal type ({:?})", *internal_type),
                     }
                 } else {
@@ -1275,9 +1275,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             },
             ty::TyRawPtr(..) => { println!("{:?}", t.sty); unimplemented!() },
 
-            // Some weird case, appearing sometimes in the code for whatever reason
-            // Often as unused temporary variables, which are never really used
-            ty::TyNever => Type::Void,
+            
 
             _ => { println!("{:?}", t.sty); unimplemented!() },
             // TyEnum(AdtDef<'tcx>, &'tcx Substs<'tcx>),

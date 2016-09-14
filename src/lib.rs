@@ -6,6 +6,9 @@
     slice_patterns,
 )]
 
+#![feature(plugin)]
+#![plugin(clippy)]
+
 #[macro_use]
 extern crate rustc;
 extern crate rustc_borrowck;
