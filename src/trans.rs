@@ -1252,7 +1252,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             //  Rust seems to emit () instead of void for function return types
             ty::TyNever | ty::TyTuple(&[]) => Type::Void,
             ty::TyTuple(tys) => Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect()),
-            ty::TyAdt(adt, subs) => {
+            ty::TyAdt(adt, subs) if adt.is_struct() => {
                 // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
                 // Dont know how to correctly retrieve this information for non-local crates!
                 let node_id = self.tcx.map.as_local_node_id(adt.did).unwrap();
@@ -1278,7 +1278,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             
 
             _ => { println!("{:?}", t.sty); unimplemented!() },
-            // TyEnum(AdtDef<'tcx>, &'tcx Substs<'tcx>),
             // TyBox(Ty<'tcx>),
             // TyStr,.
             // TySlice(Ty<'tcx>),
