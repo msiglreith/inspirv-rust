@@ -382,22 +382,35 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::Interface(interfaces.clone(), StorageClass::StorageClassOutput)),
                     None => Some(SpirvLvalue::Ignore),
                 }
-            },
-            Lvalue::Static(def_id) => None,
+            }
+            Lvalue::Static(def_id) => {
+                println!("inspirv: unsupported lvalue {:?}", lvalue);
+                None
+            }
             Lvalue::Projection(ref proj) => {
                 if let Some(base) = self.resolve_lvalue(&proj.base) {
-                    match (&proj.elem, base) {
-                        (&ProjectionElem::Field(field, _), SpirvLvalue::Interface(ref interfaces, storage_class)) => {
+                    match (&proj.elem, &base) {
+                        (&ProjectionElem::Field(field, _), &SpirvLvalue::Interface(ref interfaces, storage_class)) => {
                             let var = interfaces[field.index()].clone();
                             Some(SpirvLvalue::Variable(var.0, var.1, storage_class))
                         }
-                        (&ProjectionElem::Field(field, ty), SpirvLvalue::Variable(id, _, storage_class)) => {
+                        (&ProjectionElem::Field(field, ty), &SpirvLvalue::Variable(id, _, storage_class)) => {
                             let field_id = self.builder.define_constant(module::Constant::Scalar(ConstValue::U32(field.index() as u32)));
                             Some(SpirvLvalue::AccessChain(id, storage_class, vec![field_id], self.rust_ty_to_inspirv(ty)))
                         }
-                        _ => None,
+                        (&ProjectionElem::Field(field, ty), &SpirvLvalue::AccessChain(id, storage_class, ref chain, _)) => {
+                            let field_id = self.builder.define_constant(module::Constant::Scalar(ConstValue::U32(field.index() as u32)));
+                            let mut chain = chain.clone();
+                            chain.push(field_id);
+                            Some(SpirvLvalue::AccessChain(id, storage_class, chain, self.rust_ty_to_inspirv(ty)))
+                        }
+                        _ => {
+                            println!("inspirv: unsupported lvalue {:?}", (proj, &base));
+                            None
+                        }
                     }
                 } else {
+                    println!("inspirv: unsupported lvalue projection base {:?}", lvalue);
                     None
                 }
             },
@@ -728,9 +741,15 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     _ => bug!("Output argument type requires to be a struct type or empty ({:?})", mir.return_ty)
                 }
 
+                //
+                let mut execution_modes = execution_modes.clone();
+                if stage == ExecutionModel::ExecutionModelFragment {
+                    execution_modes.insert(ExecutionModeKind::ExecutionModeOriginUpperLeft, ExecutionMode::ExecutionModeOriginUpperLeft);
+                }
+
                 // Define entry point in SPIR-V
                 let mut func = self.builder
-                    .define_entry_point(fn_name, stage, execution_modes.clone(), interface_ids)
+                    .define_entry_point(fn_name, stage, execution_modes, interface_ids)
                     .ok()
                     .unwrap();
 
@@ -851,7 +870,33 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                         /// length of a [X] or [X;n] value
                                         Rvalue::Len(ref val) => {}
 
-                                        Rvalue::Cast(ref kind, ref operand, ref ty) => {}
+                                        Rvalue::Cast(ref kind, ref operand, ref ty) => {
+                                            if *kind != CastKind::Misc {
+                                                self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast kind!")
+                                            } else {
+                                                let op = self.trans_operand(block, operand);
+                                                let cast_ty = self.rust_ty_to_inspirv(ty);
+                                                match op {
+                                                    SpirvOperand::Constant(op_id) => {
+                                                        // Why!? ):
+                                                        self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported const cast rvalue (soon)!")
+                                                        // block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                    }
+                                                    SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
+                                                        let op_id = self.builder.alloc_id();
+                                                        block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
+                                                        // TODO: add cast conversions
+                                                        match (cast_ty, op_ty) {
+                                                            _ => self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast conversion!"),
+                                                        }
+
+                                                        block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                    }
+                                                    _ => self.tcx.sess.span_err(stmt.source_info.span,
+                                                                       "inspirv: Unsupported cast rvalue!"),
+                                                }
+                                            }
+                                        }
 
                                         Rvalue::BinaryOp(ref op, ref left, ref right) |
                                         Rvalue::CheckedBinaryOp(ref op, ref left, ref right) => {
@@ -860,35 +905,14 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                             println!("binop: {:?}", op);
 
                                             match (left, right) {
-                                                (SpirvOperand::Consume(SpirvLvalue::Variable(left_ptr_id,
-                                                                       Type::Int(left_width, left_sign), _)),
-                                                 SpirvOperand::Consume(SpirvLvalue::Variable(right_ptr_id,
-                                                                       Type::Int(right_width, right_sign), _))) => {
-                                                    let left_id = self.builder.alloc_id();
-                                                    let right_id = self.builder.alloc_id();
-
-                                                    // load variable values
-                                                    block.instructions
-                                                        .push(core_instruction::OpLoad(
-                                                            self.builder.define_type(&Type::Int(left_width, left_sign)),
-                                                            left_id,
-                                                            left_ptr_id,
-                                                            None
-                                                        ).into());
-
-                                                    block.instructions
-                                                        .push(core_instruction::OpLoad(
-                                                            self.builder.define_type(&Type::Int(right_width, right_sign)),
-                                                            right_id,
-                                                            right_ptr_id,
-                                                            None
-                                                        ).into());
-
-                                                    // emit addition instruction
-                                                    let add_result = self.builder.alloc_id();
-                                                    block.instructions.push(core_instruction::OpIAdd(self.builder.define_type(&lvalue_ty), add_result, left_id, right_id).into());
-                                                    // store
-                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, add_result, None).into());
+                                                (SpirvOperand::Consume(SpirvLvalue::Variable(left_id, left_ty, _)),
+                                                 SpirvOperand::Consume(SpirvLvalue::Variable(right_id, right_ty, _))) => {
+                                                    self.emit_binop(
+                                                        *op, block,
+                                                        lvalue_id, lvalue_ty,
+                                                        left_id, left_ty,
+                                                        right_id, right_ty,
+                                                    );
                                                 }
 
                                                 // TODO:
@@ -995,203 +1019,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                             let (lvalue, next_block) = destination.clone().expect("Call without destination, interesting!");
                             let lvalue =  self.resolve_lvalue(&lvalue).map(|lvalue| self.transform_lvalue(block, lvalue)).expect("Unhandled lvalue");
 
-                            let args_ops = args.iter().map(|arg| self.trans_operand(block, arg)).collect::<Vec<_>>();
-                            let component_ids = args_ops.iter().filter_map(
-                                                    |arg| match arg {
-                                                        &SpirvOperand::Constant(c) => Some(c),
-                                                        &SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
-                                                            let op_id = self.builder.alloc_id();
-                                                            block.instructions.push(
-                                                                core_instruction::OpLoad(self.builder.define_type(op_ty), op_id, op_ptr_id, None).into()
-                                                            );
-                                                            Some(op_id)
-                                                        }
-                                                        _ => None
-                                                    }).collect::<Vec<_>>();
-
                             // Translate function call
                             let id = if let Some(&InspirvAttribute::Intrinsic { ref name }) = intrinsic {
-                                // Explicit handling of intrinsic functions!
-                                match name.as_str() {
-                                    "float2_new" => {
-                                        let ty = Type::Vector(Box::new(Type::Float(32)), 2);
-                                        if args_ops.iter().all(|arg| arg.is_constant()) {
-                                            // all args are constants!
-                                            self.builder.define_constant(
-                                                module::Constant::Composite(
-                                                    ty,
-                                                    component_ids,
-                                                )
-                                            )
-                                        } else {
-                                            let composite_id = self.builder.alloc_id();
-                                            block.instructions.push(
-                                                core_instruction::OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids).into()
-                                            );
-                                            composite_id
-                                        }
-                                    }
-                                    "float3_new" => {
-                                        let ty = Type::Vector(Box::new(Type::Float(32)), 3);
-                                        if args_ops.iter().all(|arg| arg.is_constant()) {
-                                            // all args are constants!
-                                            self.builder.define_constant(
-                                                module::Constant::Composite(
-                                                    ty,
-                                                    component_ids,
-                                                )
-                                            )
-                                        } else {
-                                            let composite_id = self.builder.alloc_id();
-                                            block.instructions.push(
-                                                core_instruction::OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids).into()
-                                            );
-                                            composite_id
-                                        }
-                                    }
-                                    "float4_new" => {
-                                        let ty = Type::Vector(Box::new(Type::Float(32)), 4);
-                                        if args_ops.iter().all(|arg| arg.is_constant()) {
-                                            // all args are constants!
-                                            self.builder.define_constant(
-                                                module::Constant::Composite(
-                                                    ty,
-                                                    component_ids,
-                                                )
-                                            )
-                                        } else {
-                                            let composite_id = self.builder.alloc_id();
-                                            block.instructions.push(
-                                                core_instruction::OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids).into()
-                                            );
-                                            composite_id
-                                        }
-                                    }
-                                    "float4_swizzle2" => {
-                                        let ty = Type::Vector(Box::new(Type::Float(32)), 2);
-                                        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
-                                            // all args are constants!
-                                            let result_id = self.builder.alloc_id();
-                                            // components
-                                            let comp_x = self.extract_u32_from_operand(&args[1]);
-                                            if comp_x >= 2 { bug!{"inspirv: `float4_swizzle2` component `x` out of range {:?}", comp_x} }
-                                            let comp_y = self.extract_u32_from_operand(&args[2]);
-                                            if comp_y >= 2 { bug!{"inspirv: `float4_swizzle2` component `y` out of range {:?}", comp_y} }
-                                            block.instructions.push(
-                                                core_instruction::OpVectorShuffle(
-                                                    self.builder.define_type(&ty),
-                                                    result_id,
-                                                    component_ids[0],
-                                                    component_ids[0],
-                                                    vec![
-                                                        LiteralInteger(comp_x),
-                                                        LiteralInteger(comp_y),
-                                                    ],
-                                                ).into()
-                                            );
-                                            result_id
-                                        } else {
-                                            panic!("Unhandled dynamic `float4_swizzle2`")
-                                        }
-                                    }
-                                    "float4_swizzle3" => {
-                                        let ty = Type::Vector(Box::new(Type::Float(32)), 3);
-                                        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
-                                            // all args are constants!
-                                            let result_id = self.builder.alloc_id();
-                                            // components
-                                            let comp_x = self.extract_u32_from_operand(&args[1]);
-                                            if comp_x >= 3 { bug!{"inspirv: `float4_swizzle3` component `x` out of range {:?}", comp_x} }
-                                            let comp_y = self.extract_u32_from_operand(&args[2]);
-                                            if comp_y >= 3 { bug!{"inspirv: `float4_swizzle3` component `y` out of range {:?}", comp_y} }
-                                            let comp_z = self.extract_u32_from_operand(&args[3]);
-                                            if comp_z >= 3 { bug!{"inspirv: `float4_swizzle3` component `z` out of range {:?}", comp_z} }
-                                            block.instructions.push(
-                                                core_instruction::OpVectorShuffle(
-                                                    self.builder.define_type(&ty),
-                                                    result_id,
-                                                    component_ids[0],
-                                                    component_ids[0],
-                                                    vec![
-                                                        LiteralInteger(comp_x),
-                                                        LiteralInteger(comp_y),
-                                                        LiteralInteger(comp_z),
-                                                    ],
-                                                ).into()
-                                            );
-                                            result_id
-                                        } else {
-                                            panic!("Unhandled dynamic `float4_swizzle3`")
-                                        }
-                                    }
-                                    "float4_swizzle4" => {
-                                        let ty = Type::Vector(Box::new(Type::Float(32)), 4);
-                                        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
-                                            // all args are constants!
-                                            let result_id = self.builder.alloc_id();
-                                            // components
-                                            let comp_x = self.extract_u32_from_operand(&args[1]);
-                                            if comp_x >= 4 { bug!{"inspirv: `float4_swizzle3` component `x` out of range {:?}", comp_x} }
-                                            let comp_y = self.extract_u32_from_operand(&args[2]);
-                                            if comp_y >= 4 { bug!{"inspirv: `float4_swizzle3` component `y` out of range {:?}", comp_y} }
-                                            let comp_z = self.extract_u32_from_operand(&args[3]);
-                                            if comp_z >= 4 { bug!{"inspirv: `float4_swizzle3` component `z` out of range {:?}", comp_z} }
-                                            let comp_w = self.extract_u32_from_operand(&args[4]);
-                                            if comp_w >= 4 { bug!{"inspirv: `float4_swizzle3` component `w` out of range {:?}", comp_w} }
-                                            block.instructions.push(
-                                                core_instruction::OpVectorShuffle(
-                                                    self.builder.define_type(&ty),
-                                                    result_id,
-                                                    component_ids[0],
-                                                    component_ids[0],
-                                                    vec![
-                                                        LiteralInteger(comp_x),
-                                                        LiteralInteger(comp_y),
-                                                        LiteralInteger(comp_z),
-                                                        LiteralInteger(comp_w),
-                                                    ],
-                                                ).into()
-                                            );
-                                            result_id
-                                        } else {
-                                            panic!("Unhandled dynamic `float4_swizzle4`")
-                                        }
-                                    }
-                                    "shuffle4" => {
-                                        let ty = Type::Vector(Box::new(Type::Float(32)), 2);
-                                        if args_ops[2..].iter().all(|arg| arg.is_constant()) {
-                                            // all args are constants!
-                                            let result_id = self.builder.alloc_id();
-                                            // components
-                                            let comp_x = self.extract_u32_from_operand(&args[2]);
-                                            if comp_x >= 4 { bug!{"inspirv: `shuffle4` component `x` out of range {:?}", comp_x} }
-                                            let comp_y = self.extract_u32_from_operand(&args[3]);
-                                            if comp_y >= 4 { bug!{"inspirv: `shuffle4` component `y` out of range {:?}", comp_y} }
-                                            let comp_z = self.extract_u32_from_operand(&args[4]);
-                                            if comp_z >= 4 { bug!{"inspirv: `shuffle4` component `z` out of range {:?}", comp_z} }
-                                            let comp_w = self.extract_u32_from_operand(&args[5]);
-                                            if comp_w >= 4 { bug!{"inspirv: `shuffle4` component `w` out of range {:?}", comp_w} }
-                                            block.instructions.push(
-                                                core_instruction::OpVectorShuffle(
-                                                    self.builder.define_type(&ty),
-                                                    result_id,
-                                                    component_ids[1],
-                                                    component_ids[2],
-                                                    vec![
-                                                        LiteralInteger(comp_x),
-                                                        LiteralInteger(comp_y),
-                                                        LiteralInteger(comp_z),
-                                                        LiteralInteger(comp_w),
-                                                    ],
-                                                ).into()
-                                            );
-                                            result_id
-                                        } else {
-                                            panic!("Unhandled dynamic `shuffle4`")
-                                        }
-                                    }
-                                    _ => bug!("Unknown function call intrinsic")
-                                }
+                                self.emit_intrinsic(name.as_str(), block, args)
                             } else {
                                 panic!("Unhandled function call")  // TODO: normal function call
                             };
@@ -1230,6 +1060,163 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         self.arg_ids = IndexVec::new();
         self.var_ids = IndexVec::new();
         self.temp_ids = IndexVec::new();
+    }
+
+    fn emit_binop(&mut self, op: BinOp, block: &mut Block, result_id: Id, result_ty: Type, left_id: Id, left_ty: Type, right_id: Id, right_ty: Type) {
+        let left_ptr_id = self.builder.alloc_id();
+        let right_ptr_id = self.builder.alloc_id();
+
+        // load variable values
+        block.instructions
+            .push(core_instruction::OpLoad(
+                self.builder.define_type(&left_ty),
+                left_ptr_id,
+                left_id,
+                None
+            ).into());
+
+        block.instructions
+            .push(core_instruction::OpLoad(
+                self.builder.define_type(&right_ty),
+                right_ptr_id,
+                right_id,
+                None
+            ).into());
+
+        // emit addition instruction
+        let add_result = self.builder.alloc_id();
+        match (op, &left_ty, &right_ty) {
+            (BinOp::Add, &Type::Int(..), &Type::Int(..)) => {
+                block.instructions.push(core_instruction::OpIAdd(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into());
+            }
+
+            (BinOp::Add, &Type::Float(..), &Type::Float(..)) => {
+                block.instructions.push(core_instruction::OpFAdd(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into());
+            }
+
+            (BinOp::Div, &Type::Float(..), &Type::Float(..)) => {
+                block.instructions.push(core_instruction::OpFDiv(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into());
+            }
+
+            _ => bug!("Unexpected binop combination ({:?})", (op, left_ty, right_ty)),
+        }
+        
+        // store
+        block.instructions.push(core_instruction::OpStore(result_id, add_result, None).into());
+    }
+
+    fn emit_intrinsic(&mut self, intrinsic: &str, block: &mut Block, args: &[Operand<'tcx>]) -> Id {
+        let args_ops = args.iter().map(|arg| self.trans_operand(block, arg)).collect::<Vec<_>>();
+        let component_ids = args_ops.iter().filter_map(
+                                |arg| match arg {
+                                    &SpirvOperand::Constant(c) => Some(c),
+                                    &SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
+                                        let op_id = self.builder.alloc_id();
+                                        block.instructions.push(
+                                            core_instruction::OpLoad(self.builder.define_type(op_ty), op_id, op_ptr_id, None).into()
+                                        );
+                                        Some(op_id)
+                                    }
+                                    _ => None
+                                }).collect::<Vec<_>>();
+
+        match intrinsic {
+            "float2_new" => self.emit_intrinsic_floatX_new(2, block, args_ops, component_ids),
+            "float3_new" => self.emit_intrinsic_floatX_new(3, block, args_ops, component_ids),
+            "float4_new" => self.emit_intrinsic_floatX_new(4, block, args_ops, component_ids),
+            "float2_swizzle2" => self.emit_instrinsic_swizzle(2, 2, block, args, args_ops, component_ids),
+            "float2_swizzle3" => self.emit_instrinsic_swizzle(2, 3, block, args, args_ops, component_ids),
+            "float2_swizzle4" => self.emit_instrinsic_swizzle(2, 4, block, args, args_ops, component_ids),
+            "float3_swizzle2" => self.emit_instrinsic_swizzle(3, 2, block, args, args_ops, component_ids),
+            "float3_swizzle3" => self.emit_instrinsic_swizzle(3, 3, block, args, args_ops, component_ids),
+            "float3_swizzle4" => self.emit_instrinsic_swizzle(3, 4, block, args, args_ops, component_ids),
+            "float4_swizzle2" => self.emit_instrinsic_swizzle(4, 2, block, args, args_ops, component_ids),
+            "float4_swizzle3" => self.emit_instrinsic_swizzle(4, 3, block, args, args_ops, component_ids),
+            "float4_swizzle4" => self.emit_instrinsic_swizzle(4, 4, block, args, args_ops, component_ids),
+            "shuffle4_4x4" => {
+                let ty = Type::Vector(Box::new(Type::Float(32)), 4);
+                if args_ops[2..].iter().all(|arg| arg.is_constant()) {
+                    // all args are constants!
+                    let result_id = self.builder.alloc_id();
+                    // components
+                    let comp_x = self.extract_u32_from_operand(&args[2]);
+                    if comp_x >= 8 { bug!{"inspirv: shuffle component `x` out of range {:?}", comp_x} }
+                    let comp_y = self.extract_u32_from_operand(&args[3]);
+                    if comp_y >= 8 { bug!{"inspirv: shuffle component `y` out of range {:?}", comp_y} }
+                    let comp_z = self.extract_u32_from_operand(&args[4]);
+                    if comp_z >= 8 { bug!{"inspirv: shuffle component `z` out of range {:?}", comp_z} }
+                    let comp_w = self.extract_u32_from_operand(&args[5]);
+                    if comp_w >= 8 { bug!{"inspirv: shuffle component `w` out of range {:?}", comp_w} }
+                    block.instructions.push(
+                        core_instruction::OpVectorShuffle(
+                            self.builder.define_type(&ty),
+                            result_id,
+                            component_ids[0],
+                            component_ids[1],
+                            vec![
+                                LiteralInteger(comp_x),
+                                LiteralInteger(comp_y),
+                                LiteralInteger(comp_z),
+                                LiteralInteger(comp_w),
+                            ],
+                        ).into()
+                    );
+                    result_id
+                } else {
+                    panic!("Unhandled dynamic `shuffle4`")
+                }
+            }
+            _ => bug!("Unknown function call intrinsic")
+        }
+    }
+
+    fn emit_intrinsic_floatX_new(&mut self, num_components: usize, block: &mut Block, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        assert!(num_components == component_ids.len());
+        let ty = Type::Vector(Box::new(Type::Float(32)), num_components as u32);
+        if args.iter().all(|arg| arg.is_constant()) {
+            // all args are constants!
+            self.builder.define_constant(
+                module::Constant::Composite(
+                    ty,
+                    component_ids,
+                )
+            )
+        } else {
+            let composite_id = self.builder.alloc_id();
+            block.instructions.push(
+                core_instruction::OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids).into()
+            );
+            composite_id
+        }
+    }
+
+    fn emit_instrinsic_swizzle(&mut self, num_input_components: usize, num_output_components: usize, block: &mut Block, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        assert!(num_output_components == component_ids.len());
+        let ty = Type::Vector(Box::new(Type::Float(32)), num_output_components as u32);
+        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
+            // all args are constants!
+            let result_id = self.builder.alloc_id();
+            // components
+            let components = (0..num_output_components).map(|i| {
+                let component = self.extract_u32_from_operand(&args[i+1]);
+                if component >= num_input_components as u32 {
+                    bug!{"inspirv: swizzle component({:?}) out of range {:?}", i, component}
+                }
+                LiteralInteger(component)
+            }).collect::<Vec<_>>();
+            block.instructions.push(
+                core_instruction::OpVectorShuffle(
+                    self.builder.define_type(&ty),
+                    result_id,
+                    component_ids[0],
+                    component_ids[0],
+                    components
+                ).into()
+            );
+            result_id
+        } else {
+            panic!("Unhandled dynamic swizzle!")
+        }
     }
 
     // TODO: low: We could cache some aggregated types for faster compilation

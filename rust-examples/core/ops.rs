@@ -116,6 +116,13 @@ impl Mul for isize {
     fn mul(self, rhs: isize) -> Self::Output { self * rhs }
 }
 
+impl Mul for f32 {
+    type Output = f32;
+    #[inline]
+    #[inspirv(compiler_builtin)]
+    fn mul(self, rhs: f32) -> Self::Output { self * rhs }
+}
+
 #[lang = "div"]
 pub trait Div<RHS=Self> {
     type Output;
@@ -127,6 +134,13 @@ impl Div for isize {
     #[inline]
     #[inspirv(compiler_builtin)]
     fn div(self, rhs: isize) -> Self::Output { self / rhs }
+}
+
+impl Div for f32 {
+    type Output = f32;
+    #[inline]
+    #[inspirv(compiler_builtin)]
+    fn div(self, rhs: f32) -> Self::Output { self / rhs }
 }
 
 #[lang = "add_assign"]
