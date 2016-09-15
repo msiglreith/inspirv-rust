@@ -16,8 +16,9 @@ use syntax::ast::{LitKind, LitIntType, NodeId, IntTy, UintTy, FloatTy, MetaItemK
 use std::collections::HashMap;
 use std::fs::File;
 use inspirv;
+use inspirv::instruction;
 use inspirv::types::*;
-use inspirv::core::instruction as core_instruction;
+use inspirv::core::instruction::*;
 use inspirv::core::enumeration::*;
 use inspirv::instruction::BranchInstruction;
 use inspirv_builder::function::{Argument, LocalVar, Block};
@@ -204,14 +205,15 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                     MetaItemKind::NameValue(ref name, ref value) => {
                                         match &**name {
                                             "entry_point" => {
+                                                use inspirv::core::enumeration::ExecutionModel::*;
                                                 let stage = match &*extract_attr_str(value) {
-                                                    "vertex" => Some(ExecutionModel::ExecutionModelVertex),
-                                                    "tessellation_control" => Some(ExecutionModel::ExecutionModelTessellationControl),
-                                                    "tessellation_eval" => Some(ExecutionModel::ExecutionModelTessellationEvaluation),
-                                                    "geometry" => Some(ExecutionModel::ExecutionModelGeometry),
-                                                    "fragment" => Some(ExecutionModel::ExecutionModelFragment),
-                                                    "gl_compute" => Some(ExecutionModel::ExecutionModelGLCompute),
-                                                    "kernel" => Some(ExecutionModel::ExecutionModelKernel),
+                                                    "vertex" => Some(ExecutionModelVertex),
+                                                    "tessellation_control" => Some(ExecutionModelTessellationControl),
+                                                    "tessellation_eval" => Some(ExecutionModelTessellationEvaluation),
+                                                    "geometry" => Some(ExecutionModelGeometry),
+                                                    "fragment" => Some(ExecutionModelFragment),
+                                                    "gl_compute" => Some(ExecutionModelGLCompute),
+                                                    "kernel" => Some(ExecutionModelKernel),
                                                     _ => {
                                                         self.tcx.sess.span_err(item.span, "Unknown `inspirv` entry_point execution model");
                                                         None
@@ -231,38 +233,39 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                             },
 
                                             "builtin" => {
+                                                use inspirv::core::enumeration::BuiltIn::*;
                                                 let builtin = match &*extract_attr_str(value) {
                                                     // Should be all possible builtIn's for shaders 
-                                                    "Position" => Some(BuiltIn::BuiltInPosition),
-                                                    "PointSize" => Some(BuiltIn::BuiltInPointSize),
-                                                    "ClipDistance" => Some(BuiltIn::BuiltInClipDistance),
-                                                    "CullDistance" => Some(BuiltIn::BuiltInCullDistance),
-                                                    "VertexId" => Some(BuiltIn::BuiltInVertexId),
-                                                    "InstanceId" => Some(BuiltIn::BuiltInInstanceId),
-                                                    "PrimitiveId" => Some(BuiltIn::BuiltInPrimitiveId),
-                                                    "Layer" => Some(BuiltIn::BuiltInLayer),
-                                                    "InvocationId" => Some(BuiltIn::BuiltInInvocationId),
-                                                    "ViewportIndex" => Some(BuiltIn::BuiltInViewportIndex),
-                                                    "TessLevelOuter" => Some(BuiltIn::BuiltInTessLevelOuter),
-                                                    "TessLevelInner" => Some(BuiltIn::BuiltInTessLevelInner),
-                                                    "TessCoord" => Some(BuiltIn::BuiltInTessCoord),
-                                                    "PatchVertices" => Some(BuiltIn::BuiltInPatchVertices),
-                                                    "FragCoord" => Some(BuiltIn::BuiltInFragCoord),
-                                                    "PointCoord" => Some(BuiltIn::BuiltInPointCoord),
-                                                    "FrontFacing" => Some(BuiltIn::BuiltInFrontFacing),
-                                                    "SampleId" => Some(BuiltIn::BuiltInSampleId),
-                                                    "SamplePosition" => Some(BuiltIn::BuiltInSamplePosition),
-                                                    "SampleMask" => Some(BuiltIn::BuiltInSampleMask),
-                                                    "FragDepth" => Some(BuiltIn::BuiltInFragDepth),
-                                                    "HelperInvocation" => Some(BuiltIn::BuiltInHelperInvocation),
-                                                    "NumWorkgroups" => Some(BuiltIn::BuiltInNumWorkgroups),
-                                                    "WorkgroupSize" => Some(BuiltIn::BuiltInWorkgroupSize),
-                                                    "WorkgroupId" => Some(BuiltIn::BuiltInWorkgroupId),
-                                                    "LocalInvocationId" => Some(BuiltIn::BuiltInLocalInvocationId),
-                                                    "GlobalInvocationId" => Some(BuiltIn::BuiltInGlobalInvocationId),
-                                                    "LocalInvocationIndex" => Some(BuiltIn::BuiltInLocalInvocationIndex),
-                                                    "VertexIndex" => Some(BuiltIn::BuiltInVertexIndex),
-                                                    "InstanceIndex" => Some(BuiltIn::BuiltInInstanceIndex),
+                                                    "Position" => Some(BuiltInPosition),
+                                                    "PointSize" => Some(BuiltInPointSize),
+                                                    "ClipDistance" => Some(BuiltInClipDistance),
+                                                    "CullDistance" => Some(BuiltInCullDistance),
+                                                    "VertexId" => Some(BuiltInVertexId),
+                                                    "InstanceId" => Some(BuiltInInstanceId),
+                                                    "PrimitiveId" => Some(BuiltInPrimitiveId),
+                                                    "Layer" => Some(BuiltInLayer),
+                                                    "InvocationId" => Some(BuiltInInvocationId),
+                                                    "ViewportIndex" => Some(BuiltInViewportIndex),
+                                                    "TessLevelOuter" => Some(BuiltInTessLevelOuter),
+                                                    "TessLevelInner" => Some(BuiltInTessLevelInner),
+                                                    "TessCoord" => Some(BuiltInTessCoord),
+                                                    "PatchVertices" => Some(BuiltInPatchVertices),
+                                                    "FragCoord" => Some(BuiltInFragCoord),
+                                                    "PointCoord" => Some(BuiltInPointCoord),
+                                                    "FrontFacing" => Some(BuiltInFrontFacing),
+                                                    "SampleId" => Some(BuiltInSampleId),
+                                                    "SamplePosition" => Some(BuiltInSamplePosition),
+                                                    "SampleMask" => Some(BuiltInSampleMask),
+                                                    "FragDepth" => Some(BuiltInFragDepth),
+                                                    "HelperInvocation" => Some(BuiltInHelperInvocation),
+                                                    "NumWorkgroups" => Some(BuiltInNumWorkgroups),
+                                                    "WorkgroupSize" => Some(BuiltInWorkgroupSize),
+                                                    "WorkgroupId" => Some(BuiltInWorkgroupId),
+                                                    "LocalInvocationId" => Some(BuiltInLocalInvocationId),
+                                                    "GlobalInvocationId" => Some(BuiltInGlobalInvocationId),
+                                                    "LocalInvocationIndex" => Some(BuiltInLocalInvocationIndex),
+                                                    "VertexIndex" => Some(BuiltInVertexIndex),
+                                                    "InstanceIndex" => Some(BuiltInInstanceIndex),
                                                     _ => {
                                                         self.tcx.sess.span_err(item.span, "Unknown `inspirv` builtin variable");
                                                         None
@@ -385,38 +388,40 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
     // TODO: remove ugly clones..
     fn resolve_lvalue(&mut self, lvalue: &Lvalue<'tcx>) -> Option<SpirvLvalue> {
+        use rustc::mir::repr::Lvalue::*;
+        use inspirv::core::enumeration::StorageClass::*;
         match *lvalue {
-            Lvalue::Arg(id) => {
+            Arg(id) => {
                 if let Some(arg) = self.arg_ids[id].clone() {
                     match arg {
-                        FuncArg::Argument(arg) => Some(SpirvLvalue::Variable(arg.id, arg.ty, StorageClass::StorageClassFunction)),
-                        FuncArg::Interface(interfaces) => Some(SpirvLvalue::SignatureStruct(interfaces, StorageClass::StorageClassInput)),
+                        FuncArg::Argument(arg) => Some(SpirvLvalue::Variable(arg.id, arg.ty, StorageClassFunction)),
+                        FuncArg::Interface(interfaces) => Some(SpirvLvalue::SignatureStruct(interfaces, StorageClassInput)),
                         FuncArg::ConstBuffer(_consts) => None, // TODO: High
                     }
                 } else {
                     Some(SpirvLvalue::Ignore) // unnamed argument `_`
                 }
             }
-            Lvalue::Var(id) => {
+            Var(id) => {
                 let var = self.var_ids[id].clone();
-                Some(SpirvLvalue::Variable(var.id, var.ty, StorageClass::StorageClassFunction))
+                Some(SpirvLvalue::Variable(var.id, var.ty, StorageClassFunction))
             }
-            Lvalue::Temp(id) => {
+            Temp(id) => {
                 let var = self.temp_ids[id].clone();
-                Some(SpirvLvalue::Variable(var.id, var.ty, StorageClass::StorageClassFunction))
+                Some(SpirvLvalue::Variable(var.id, var.ty, StorageClassFunction))
             }
-            Lvalue::ReturnPointer => {
+            ReturnPointer => {
                 match self.return_ids {
                     Some(FuncReturn::Return(ref var)) => Some(SpirvLvalue::Return(var.id, var.ty.clone())),
-                    Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::SignatureStruct(interfaces.clone(), StorageClass::StorageClassOutput)),
+                    Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::SignatureStruct(interfaces.clone(), StorageClassOutput)),
                     None => Some(SpirvLvalue::Ignore),
                 }
             }
-            Lvalue::Static(_def_id) => {
+            Static(_def_id) => {
                 println!("inspirv: unsupported lvalue {:?}", lvalue);
                 None
             }
-            Lvalue::Projection(ref proj) => {
+            Projection(ref proj) => {
                 if let Some(base) = self.resolve_lvalue(&proj.base) {
                     match (&proj.elem, &base) {
                         (&ProjectionElem::Field(field, _), &SpirvLvalue::SignatureStruct(ref interfaces, storage_class)) => {
@@ -450,12 +455,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         match lvalue {
             SpirvLvalue::AccessChain(root_id, storage_class, ref chain, ref ty) => {
                 let chain_id = self.builder.alloc_id();
-                block.instructions.push(core_instruction::OpAccessChain(
-                    self.builder.define_type(&Type::Pointer(Box::new(ty.clone()), storage_class)),
-                    chain_id,
-                    root_id,
-                    chain.clone()
-                ).into());
+                let ty_id = self.builder.define_type(&Type::Pointer(Box::new(ty.clone()), storage_class));
+                let op_access_chain = OpAccessChain(ty_id, chain_id, root_id, chain.clone());
+                block.emit_instruction(op_access_chain);
                 SpirvLvalue::Variable(chain_id, ty.clone(), storage_class)
             },
             _ => lvalue
@@ -475,8 +477,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     }
 
     fn trans_operand(&mut self, block: &mut Block, operand: &Operand<'tcx>) -> SpirvOperand {
+        use rustc::mir::repr::Operand::*;
         match *operand {
-            Operand::Consume(ref lvalue) => {
+            Consume(ref lvalue) => {
                 let lvalue = self.resolve_lvalue(lvalue);
                 if let Some(lvalue) = lvalue {
                     let lvalue = self.transform_lvalue(block, lvalue);
@@ -487,75 +490,71 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 }
             }
 
-            Operand::Constant(ref c) => {
+            Constant(ref c) => {
                 match c.literal {
                     Literal::Item { def_id, .. } => {
                         SpirvOperand::FnCall(def_id)
                     }
                     Literal::Value { ref value } => {
+                        use rustc::mir::repr::ConstVal::*;
                         match *value {
-                            ConstVal::Float(ConstFloat::F32(v)) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Float(ConstValueFloat::F32(v)))),
-                            ConstVal::Float(ConstFloat::F64(v)) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Float(ConstValueFloat::F64(v)))),
-                            ConstVal::Float(ConstFloat::FInfer { .. }) => {
+                            Float(ConstFloat::F32(v)) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Float(ConstValueFloat::F32(v)))),
+                            Float(ConstFloat::F64(v)) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Float(ConstValueFloat::F64(v)))),
+                            Float(ConstFloat::FInfer { .. }) => {
                                 bug!("MIR must not use `{:?}`", c.literal)
                             }
-                            ConstVal::Integral(ConstInt::I8(v)) => {
+                            Integral(ConstInt::I8(v)) => {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::I8(v))))
                             }
-                            ConstVal::Integral(ConstInt::I16(v)) => {
+                            Integral(ConstInt::I16(v)) => {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::I16(v))))
                             }
-                            ConstVal::Integral(ConstInt::I32(v)) => {
+                            Integral(ConstInt::I32(v)) => {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::I32(v))))
                             }
-                            ConstVal::Integral(ConstInt::I64(v)) => {
+                            Integral(ConstInt::I64(v)) => {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::I64(v))))
                             }
-                            ConstVal::Integral(ConstInt::Isize(_v)) => SpirvOperand::None,
+                            Integral(ConstInt::Isize(_v)) => SpirvOperand::None,
                             // {
                             // SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Isize(v))))
                             // },
-                            ConstVal::Integral(ConstInt::U8(v)) => {
+                            Integral(ConstInt::U8(v)) => {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::U8(v))))
                             }
-                            ConstVal::Integral(ConstInt::U16(v)) => {
+                            Integral(ConstInt::U16(v)) => {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::U16(v))))
                             }
-                            ConstVal::Integral(ConstInt::U32(v)) => {
+                            Integral(ConstInt::U32(v)) => {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::U32(v))))
                             }
-                            ConstVal::Integral(ConstInt::U64(v)) => {
+                            Integral(ConstInt::U64(v)) => {
                                 SpirvOperand::Constant(self.builder
                                     .define_constant(module::Constant::Scalar(ConstValue::U64(v))))
                             }
-                            ConstVal::Integral(ConstInt::Usize(_v)) => SpirvOperand::None,
+                            Integral(ConstInt::Usize(_v)) => SpirvOperand::None,
                             // {
                             // SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Usize(v))))
                             // },
-                            ConstVal::Bool(val) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Bool(val)))),
-                            ConstVal::Char(_val) => SpirvOperand::None,
-                            ConstVal::Integral(ConstInt::Infer(_)) |
-                            ConstVal::Integral(ConstInt::InferSigned(_)) => {
-                                bug!("MIR must not use `{:?}`", c.literal)
-                            }
-                            ConstVal::Str(_) => SpirvOperand::None, // TODO: unsupported
-                            ConstVal::ByteStr(ref _v) => SpirvOperand::None, // TODO: unsupported?
-                            ConstVal::Struct(_) |
-                            ConstVal::Tuple(_) |
-                            ConstVal::Array(..) |
-                            ConstVal::Repeat(..) |
-                            ConstVal::Function(_) => {
-                                bug!("MIR must not use `{:?}` (which refers to a local ID)",
-                                     c.literal)
-                            }
-                            ConstVal::Dummy => bug!(),
+                            Bool(val) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Bool(val)))),
+                            Char(_val) => SpirvOperand::None,
+                            Integral(ConstInt::Infer(_)) |
+                            Integral(ConstInt::InferSigned(_)) => bug!("MIR must not use `{:?}`", c.literal),
+                            Str(_) => SpirvOperand::None, // TODO: unsupported
+                            ByteStr(ref _v) => SpirvOperand::None, // TODO: unsupported?
+                            Struct(_) |
+                            Tuple(_) |
+                            Array(..) |
+                            Repeat(..) |
+                            Function(_) => bug!("MIR must not use `{:?}` (which refers to a local ID)", c.literal),
+                            Dummy => bug!(),
                         }
                     }
                     Literal::Promoted { .. /* ref index */ } => SpirvOperand::None,
@@ -864,27 +863,28 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                         
                             match lvalue {
                                 SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return(lvalue_id, lvalue_ty) => {
+                                    use rustc::mir::repr::Rvalue::*;
                                     match *rvalue {
-                                        Rvalue::Use(ref operand) => {
+                                        Use(ref operand) => {
                                             let op = self.trans_operand(block, operand);
                                             match op {
                                                 SpirvOperand::Constant(op_id) => {
-                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                    block.emit_instruction(OpStore(lvalue_id, op_id, None));
                                                 }
                                                 SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
                                                     let op_id = self.builder.alloc_id();
-                                                    block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
-                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                    block.emit_instruction(OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None));
+                                                    block.emit_instruction(OpStore(lvalue_id, op_id, None));
                                                 }
                                                 SpirvOperand::Consume(SpirvLvalue::SignatureStruct(ref interfaces, _)) => {
                                                     let ids = interfaces.iter().map(|interface| {
                                                         let id = self.builder.alloc_id();
-                                                        block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&interface.1), id, interface.0, None).into());
+                                                        block.emit_instruction(OpLoad(self.builder.define_type(&interface.1), id, interface.0, None));
                                                         id
                                                     }).collect::<Vec<_>>();
                                                     let composite_id = self.builder.alloc_id();
-                                                    block.instructions.push(core_instruction::OpCompositeConstruct(self.builder.define_type(&lvalue_ty), composite_id, ids).into());
-                                                    block.instructions.push(core_instruction::OpStore(lvalue_id, composite_id, None).into());
+                                                    block.emit_instruction(OpCompositeConstruct(self.builder.define_type(&lvalue_ty), composite_id, ids));
+                                                    block.emit_instruction(OpStore(lvalue_id, composite_id, None));
                                                 }
                                                 _ => self.tcx.sess.span_err(stmt.source_info.span,
                                                                    "inspirv: Unsupported rvalue!"),
@@ -892,17 +892,17 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                         }
 
                                         /// [x; 32]
-                                        Rvalue::Repeat(ref _operand, ref _times) => {}
+                                        Repeat(ref _operand, ref _times) => {}
 
-                                        Rvalue::Ref(_, _, _) => {
+                                        Ref(_, _, _) => {
                                             self.tcx.sess.span_err(stmt.source_info.span,
                                                                    "inspirv: Unsupported rvalue reference!")
                                         }
 
                                         /// length of a [X] or [X;n] value
-                                        Rvalue::Len(_ /* ref val */) => {}
+                                        Len(_ /* ref val */) => {}
 
-                                        Rvalue::Cast(ref kind, ref operand, ty) => {
+                                        Cast(ref kind, ref operand, ty) => {
                                             if *kind != CastKind::Misc {
                                                 self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast kind!")
                                             } else {
@@ -912,17 +912,17 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                     SpirvOperand::Constant(_op_id) => {
                                                         // Why!? ):
                                                         self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported const cast rvalue (soon)!")
-                                                        // block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                        // block.emit_instruction(OpStore(lvalue_id, op_id, None));
                                                     }
                                                     SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
                                                         let op_id = self.builder.alloc_id();
-                                                        block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
+                                                        block.emit_instruction(OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None));
                                                         // TODO: add cast conversions
                                                         match (cast_ty, op_ty) {
                                                             _ => self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast conversion!"),
                                                         }
 
-                                                        block.instructions.push(core_instruction::OpStore(lvalue_id, op_id, None).into());
+                                                        block.emit_instruction(OpStore(lvalue_id, op_id, None));
                                                     }
                                                     _ => self.tcx.sess.span_err(stmt.source_info.span,
                                                                        "inspirv: Unsupported cast rvalue!"),
@@ -930,8 +930,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                             }
                                         }
 
-                                        Rvalue::BinaryOp(ref op, ref left, ref right) |
-                                        Rvalue::CheckedBinaryOp(ref op, ref left, ref right) => {
+                                        BinaryOp(ref op, ref left, ref right) |
+                                        CheckedBinaryOp(ref op, ref left, ref right) => {
                                             let left = self.trans_operand(block, left);
                                             let right = self.trans_operand(block, right);
                                             println!("binop: {:?}", op);
@@ -952,42 +952,43 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                             }
                                         }
 
-                                        Rvalue::UnaryOp(ref op, ref operand) => {
+                                        UnaryOp(ref op, ref operand) => {
                                             let _operand = self.trans_operand(block, operand);
                                             println!("unop: {:?}", op);
                                             // TODO
                                         }
 
-                                        Rvalue::Aggregate(ref _kind, ref _operands) => {}
+                                        Aggregate(ref _kind, ref _operands) => {}
 
-                                        Rvalue::Box(..) => {
+                                        Box(..) => {
                                             self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid box r-value")
                                         }
-                                        Rvalue::InlineAsm { .. } => {
+                                        InlineAsm { .. } => {
                                             self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid inline asm")
                                         }
                                     }
                                 }
 
                                 SpirvLvalue::SignatureStruct(ref interfaces, _) => {
+                                    use rustc::mir::repr::Rvalue::*;
                                     match *rvalue {
-                                        Rvalue::Use(ref _operand) => {
+                                        Use(ref _operand) => {
                                             // TODO:
                                             self.tcx.sess.span_warn(stmt.source_info.span,
                                                         "inspirv: Unhandled use-assignment for interfaces (soon)!")
                                         }
 
-                                        Rvalue::Aggregate(ref _kind, ref operands) => {
+                                        Aggregate(ref _kind, ref operands) => {
                                             for (operand, interface) in operands.iter().zip(interfaces.iter()) {
                                                 let op = self.trans_operand(block, operand);
                                                 match op {
                                                     SpirvOperand::Constant(op_id) => {
-                                                        block.instructions.push(core_instruction::OpStore(interface.0, op_id, None).into());
+                                                        block.emit_instruction(OpStore(interface.0, op_id, None));
                                                     }
                                                     SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
                                                         let op_id = self.builder.alloc_id();
-                                                        block.instructions.push(core_instruction::OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None).into());
-                                                        block.instructions.push(core_instruction::OpStore(interface.0, op_id, None).into());
+                                                        block.emit_instruction(OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None));
+                                                        block.emit_instruction(OpStore(interface.0, op_id, None));
                                                     }
                                                     _ => self.tcx.sess.span_err(stmt.source_info.span,
                                                                        "inspirv: Unsupported aggregate operand!"),
@@ -1013,29 +1014,30 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             }
 
             match bb.terminator().kind {
-                TerminatorKind::Goto { ref target } => {
-                    block.branch_instr = Some(BranchInstruction::Branch(core_instruction::OpBranch(block_labels[*target])));
+                use rustc::mir::repr::TerminatorKind::*;
+                Goto { ref target } => {
+                    block.branch_instr = Some(BranchInstruction::Branch(OpBranch(block_labels[*target])));
                 }
 
-                TerminatorKind::Return => {
+                Return => {
                     // TODO: low: handle return value
                     block.branch_instr =
-                        Some(BranchInstruction::Return(core_instruction::OpReturn));
+                        Some(BranchInstruction::Return(OpReturn));
                 }
 
-                TerminatorKind::Unreachable => {
+                Unreachable => {
                     block.branch_instr =
-                        Some(BranchInstruction::Unreachable(core_instruction::OpUnreachable));
+                        Some(BranchInstruction::Unreachable(OpUnreachable));
                 }
 
-                // &TerminatorKind::If { cond, targets } => { },
-                // &TerminatorKind::Switch { discr, adt_def, targets } => { },
-                // &TerminatorKind::SwitchInt { discr, switch_ty, values, targets } => { },
-                // &TerminatorKind::Resume => { },
-                // &TerminatorKind::Drop { location, target, unwind } => { },
-                // &TerminatorKind::DropAndReplace { location, value, target, unwind } => { },
+                // &If { cond, targets } => { },
+                // &Switch { discr, adt_def, targets } => { },
+                // &SwitchInt { discr, switch_ty, values, targets } => { },
+                // &Resume => { },
+                // &Drop { location, target, unwind } => { },
+                // &DropAndReplace { location, value, target, unwind } => { },
 
-                TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
+                Call { ref func, ref args, ref destination, .. } => {
                     let func_op = self.trans_operand(block, func);
                     match func_op {
                         SpirvOperand::FnCall(def_id) => {
@@ -1062,7 +1064,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                             // Store return value into lvalue destination
                             match lvalue {
                                 SpirvLvalue::Variable(lvalue_id, _, _) | SpirvLvalue::Return(lvalue_id, _) => {
-                                    block.instructions.push(core_instruction::OpStore(lvalue_id, id, None).into());
+                                    block.emit_instruction(OpStore(lvalue_id, id, None));
                                 },
 
                                 SpirvLvalue::Ignore => (),
@@ -1070,7 +1072,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 _ => self.tcx.sess.span_err(bb.terminator().source_info.span, "inspirv: Unhandled lvalue for call terminator!"),
                             }
 
-                            block.branch_instr = Some(BranchInstruction::Branch(core_instruction::OpBranch(block_labels[next_block])));
+                            block.branch_instr = Some(BranchInstruction::Branch(OpBranch(block_labels[next_block])));
                         }
 
                         _ => bug!("Unexpected operand type, expected `FnCall` ({:?})", func_op),
@@ -1078,10 +1080,10 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 },
                 //
 
-                TerminatorKind::Assert { ref target, .. } => {
+                Assert { ref target, .. } => {
                     // Ignore the actual asset
                     // TODO: correct behaviour? some conditions?
-                    block.branch_instr = Some(BranchInstruction::Branch(core_instruction::OpBranch(block_labels[*target])));
+                    block.branch_instr = Some(BranchInstruction::Branch(OpBranch(block_labels[*target])));
                 },
                 
                 _ => { println!("Unhandled terminator kind: {:?}", bb.terminator().kind); }, //unimplemented!(),
@@ -1100,42 +1102,33 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         let right_ptr_id = self.builder.alloc_id();
 
         // load variable values
-        block.instructions
-            .push(core_instruction::OpLoad(
-                self.builder.define_type(&left_ty),
-                left_ptr_id,
-                left_id,
-                None
-            ).into());
-
-        block.instructions
-            .push(core_instruction::OpLoad(
-                self.builder.define_type(&right_ty),
-                right_ptr_id,
-                right_id,
-                None
-            ).into());
+        let op_load_left = OpLoad(self.builder.define_type(&left_ty), left_ptr_id, left_id, None);
+        let op_load_right = OpLoad(self.builder.define_type(&right_ty), right_ptr_id, right_id, None);
+        block.emit_instruction(op_load_left);
+        block.emit_instruction(op_load_right);
 
         // emit addition instruction
         let add_result = self.builder.alloc_id();
-        match (op, &left_ty, &right_ty) {
+        let op_binop: instruction::Instruction = match (op, &left_ty, &right_ty) {
             (BinOp::Add, &Type::Int(..), &Type::Int(..)) => {
-                block.instructions.push(core_instruction::OpIAdd(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into());
+                OpIAdd(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
             }
 
             (BinOp::Add, &Type::Float(..), &Type::Float(..)) => {
-                block.instructions.push(core_instruction::OpFAdd(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into());
+                OpFAdd(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
             }
 
             (BinOp::Div, &Type::Float(..), &Type::Float(..)) => {
-                block.instructions.push(core_instruction::OpFDiv(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into());
+                OpFDiv(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
             }
 
             _ => bug!("Unexpected binop combination ({:?})", (op, left_ty, right_ty)),
-        }
+        };
+
+        block.emit_instruction(op_binop);
         
         // store
-        block.instructions.push(core_instruction::OpStore(result_id, add_result, None).into());
+        block.emit_instruction(OpStore(result_id, add_result, None));
     }
 
     fn emit_intrinsic(&mut self, intrinsic: Intrinsic, block: &mut Block, args: &[Operand<'tcx>]) -> Id {
@@ -1146,9 +1139,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                     SpirvOperand::Constant(c) => Some(c),
                                     SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
                                         let op_id = self.builder.alloc_id();
-                                        block.instructions.push(
-                                            core_instruction::OpLoad(self.builder.define_type(op_ty), op_id, op_ptr_id, None).into()
-                                        );
+                                        let op_load = OpLoad(self.builder.define_type(op_ty), op_id, op_ptr_id, None);
+                                        block.emit_instruction(op_load);
                                         Some(op_id)
                                     }
                                     _ => None
@@ -1178,8 +1170,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     if comp_z >= 8 { bug!{"inspirv: shuffle component `z` out of range {:?}", comp_z} }
                     let comp_w = self.extract_u32_from_operand(&args[5]);
                     if comp_w >= 8 { bug!{"inspirv: shuffle component `w` out of range {:?}", comp_w} }
-                    block.instructions.push(
-                        core_instruction::OpVectorShuffle(
+                    block.emit_instruction(
+                        OpVectorShuffle(
                             self.builder.define_type(&ty),
                             result_id,
                             component_ids[0],
@@ -1190,7 +1182,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 LiteralInteger(comp_z),
                                 LiteralInteger(comp_w),
                             ],
-                        ).into()
+                        )
                     );
                     result_id
                 } else {
@@ -1206,16 +1198,12 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         let ty = Type::Vector(Box::new(Type::Float(32)), num_components as u32);
         if args.iter().all(|arg| arg.is_constant()) {
             // all args are constants!
-            self.builder.define_constant(
-                module::Constant::Composite(
-                    ty,
-                    component_ids,
-                )
-            )
+            let constant = module::Constant::Composite(ty, component_ids);
+            self.builder.define_constant(constant)
         } else {
             let composite_id = self.builder.alloc_id();
-            block.instructions.push(
-                core_instruction::OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids).into()
+            block.emit_instruction(
+                OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids)
             );
             composite_id
         }
@@ -1235,14 +1223,14 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 }
                 LiteralInteger(component)
             }).collect::<Vec<_>>();
-            block.instructions.push(
-                core_instruction::OpVectorShuffle(
+            block.emit_instruction(
+                OpVectorShuffle(
                     self.builder.define_type(&ty),
                     result_id,
                     component_ids[0],
                     component_ids[0],
                     components
-                ).into()
+                )
             );
             result_id
         } else {
@@ -1254,20 +1242,20 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn rust_ty_to_inspirv(&self, t: Ty<'tcx>) -> Type {
         match t.sty {
             ty::TyBool => Type::Bool,
-            ty::TyInt(IntTy::I8) => Type::Int(8, true),
-            ty::TyInt(IntTy::I16) => Type::Int(16, true),
-            ty::TyInt(IntTy::I32)
-            | ty::TyInt(IntTy::Is) => Type::Int(32, true), // isize
-            ty::TyInt(IntTy::I64) => Type::Int(64, true),
-            ty::TyUint(UintTy::U8)
-            | ty::TyChar => Type::Int(8, false),
-            ty::TyUint(UintTy::U16) => Type::Int(16, false),
-            ty::TyUint(UintTy::U32)
-            | ty::TyUint(UintTy::Us) => Type::Int(32, false), // usize
-            ty::TyUint(UintTy::U64) => Type::Int(64, false),
+            ty::TyInt(IntTy::I8)      => Type::Int(8, true),
+            ty::TyInt(IntTy::I16)     => Type::Int(16, true),
+            ty::TyInt(IntTy::Is) |
+            ty::TyInt(IntTy::I32)     => Type::Int(32, true), // isize
+            ty::TyInt(IntTy::I64)     => Type::Int(64, true),
+            ty::TyChar |
+            ty::TyUint(UintTy::U8)    => Type::Int(8, false),
+            ty::TyUint(UintTy::U16)   => Type::Int(16, false),
+            ty::TyUint(UintTy::Us) |
+            ty::TyUint(UintTy::U32)   => Type::Int(32, false), // usize
+            ty::TyUint(UintTy::U64)   => Type::Int(64, false),
             ty::TyFloat(FloatTy::F32) => Type::Float(32),
             ty::TyFloat(FloatTy::F64) => Type::Float(64),
-            ty::TyArray(_ty, _len) => unimplemented!(),
+            ty::TyArray(_ty, _len)    => unimplemented!(),
             
             // TyNever:
             //  Some weird case, appearing sometimes in the code for whatever reason
@@ -1275,7 +1263,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             // TyTuple(&[]):
             //  Rust seems to emit () instead of void for function return types
             ty::TyNever | ty::TyTuple(&[]) => Type::Void,
-            ty::TyTuple(tys) => Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect()),
+            ty::TyTuple(tys)               => Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect()),
+
+            //
             ty::TyAdt(adt, subs) if adt.is_struct() => {
                 // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
                 // Dont know how to correctly retrieve this information for non-local crates!
@@ -1285,7 +1275,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     InspirvAttribute::Vector { .. } => true,
                     _ => false,
                 });
-
                 if let Some(internal_type) = internal_type {
                     match *internal_type {
                         InspirvAttribute::Vector { ref base, components } => Type::Vector(base.clone(), components as u32),
@@ -1297,25 +1286,10 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     Type::Struct(adt.struct_variant().fields.iter().map(|field| self.rust_ty_to_inspirv(field.ty(*self.tcx, subs))).collect())
                 }    
             },
+
             ty::TyRawPtr(..) => { println!("{:?}", t.sty); unimplemented!() },
 
-            
-
             _ => { println!("{:?}", t.sty); unimplemented!() },
-            // TyBox(Ty<'tcx>),
-            // TyStr,.
-            // TySlice(Ty<'tcx>),
-            //
-            // TyRef(&'tcx Region, TypeAndMut<'tcx>),
-            // TyFnDef(DefId, &'tcx Substs<'tcx>, &'tcx BareFnTy<'tcx>),
-            // TyFnPtr(&'tcx BareFnTy<'tcx>),
-            // TyTrait(Box<TraitTy<'tcx>>),
-            // TyClosure(DefId, ClosureSubsts<'tcx>),
-            // TyProjection(ProjectionTy<'tcx>),
-            // TyParam(ParamTy),
-            // TyInfer(InferTy),
-            // TyError,
-            //
         }
     }
 }
