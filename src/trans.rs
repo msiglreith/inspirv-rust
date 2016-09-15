@@ -3,7 +3,7 @@ use rustc_mir as mir;
 use rustc::mir::transform::MirSource;
 use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
-use rustc::middle::const_val::ConstVal;
+use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::{ConstInt, ConstFloat};
 use rustc::ty::{self, TyCtxt, Ty};
 use rustc::hir;
@@ -163,6 +163,64 @@ struct InspirvModuleCtxt<'v, 'tcx: 'v> {
     return_ids: Option<FuncReturn>,
 }
 
+struct InspirvBlock<'a, 'b, 'v: 'a, 'tcx: 'v> {
+    ctxt: &'a mut InspirvModuleCtxt<'v, 'tcx>,
+    block: &'b mut Block,
+    labels: &'b IndexVec<BasicBlock, Id>,
+}
+
+fn execution_model_from_str(name: &str) -> Option<ExecutionModel> {
+    use inspirv::core::enumeration::ExecutionModel::*;
+    match name {
+        "vertex" => Some(ExecutionModelVertex),
+        "tessellation_control" => Some(ExecutionModelTessellationControl),
+        "tessellation_eval" => Some(ExecutionModelTessellationEvaluation),
+        "geometry" => Some(ExecutionModelGeometry),
+        "fragment" => Some(ExecutionModelFragment),
+        "compute" => Some(ExecutionModelGLCompute),
+        "kernel" => Some(ExecutionModelKernel),
+        _ => None,
+    }
+}
+
+fn builtin_from_str(name: &str) -> Option<BuiltIn> {
+    use inspirv::core::enumeration::BuiltIn::*;
+    match name {
+        // Should be all possible builtIn's for shaders 
+        "Position" => Some(BuiltInPosition),
+        "PointSize" => Some(BuiltInPointSize),
+        "ClipDistance" => Some(BuiltInClipDistance),
+        "CullDistance" => Some(BuiltInCullDistance),
+        "VertexId" => Some(BuiltInVertexId),
+        "InstanceId" => Some(BuiltInInstanceId),
+        "PrimitiveId" => Some(BuiltInPrimitiveId),
+        "Layer" => Some(BuiltInLayer),
+        "InvocationId" => Some(BuiltInInvocationId),
+        "ViewportIndex" => Some(BuiltInViewportIndex),
+        "TessLevelOuter" => Some(BuiltInTessLevelOuter),
+        "TessLevelInner" => Some(BuiltInTessLevelInner),
+        "TessCoord" => Some(BuiltInTessCoord),
+        "PatchVertices" => Some(BuiltInPatchVertices),
+        "FragCoord" => Some(BuiltInFragCoord),
+        "PointCoord" => Some(BuiltInPointCoord),
+        "FrontFacing" => Some(BuiltInFrontFacing),
+        "SampleId" => Some(BuiltInSampleId),
+        "SamplePosition" => Some(BuiltInSamplePosition),
+        "SampleMask" => Some(BuiltInSampleMask),
+        "FragDepth" => Some(BuiltInFragDepth),
+        "HelperInvocation" => Some(BuiltInHelperInvocation),
+        "NumWorkgroups" => Some(BuiltInNumWorkgroups),
+        "WorkgroupSize" => Some(BuiltInWorkgroupSize),
+        "WorkgroupId" => Some(BuiltInWorkgroupId),
+        "LocalInvocationId" => Some(BuiltInLocalInvocationId),
+        "GlobalInvocationId" => Some(BuiltInGlobalInvocationId),
+        "LocalInvocationIndex" => Some(BuiltInLocalInvocationIndex),
+        "VertexIndex" => Some(BuiltInVertexIndex),
+        "InstanceIndex" => Some(BuiltInInstanceIndex),
+        _ => None,
+    }
+}
+
 impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn trans(&mut self) {
         let def_ids = self.mir_map.map.keys();
@@ -205,82 +263,34 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                     MetaItemKind::NameValue(ref name, ref value) => {
                                         match &**name {
                                             "entry_point" => {
-                                                use inspirv::core::enumeration::ExecutionModel::*;
-                                                let stage = match &*extract_attr_str(value) {
-                                                    "vertex" => Some(ExecutionModelVertex),
-                                                    "tessellation_control" => Some(ExecutionModelTessellationControl),
-                                                    "tessellation_eval" => Some(ExecutionModelTessellationEvaluation),
-                                                    "geometry" => Some(ExecutionModelGeometry),
-                                                    "fragment" => Some(ExecutionModelFragment),
-                                                    "gl_compute" => Some(ExecutionModelGLCompute),
-                                                    "kernel" => Some(ExecutionModelKernel),
-                                                    _ => {
-                                                        self.tcx.sess.span_err(item.span, "Unknown `inspirv` entry_point execution model");
-                                                        None
-                                                    },
-                                                };
-
+                                                let stage = execution_model_from_str(&*extract_attr_str(value));
                                                 if let Some(stage) = stage {
-                                                    attrs.push(InspirvAttribute::EntryPoint { stage: stage, execution_modes: HashMap::new(), });
+                                                    attrs.push(InspirvAttribute::EntryPoint {
+                                                        stage: stage,
+                                                        execution_modes: HashMap::new(),
+                                                    });
+                                                } else {
+                                                    self.tcx.sess.span_err(item.span, "Unknown `inspirv` entry_point execution model");
                                                 }
                                             },
-
                                             "location" => {
                                                 match value.node {
-                                                    LitKind::Int(b, LitIntType::Unsigned(..)) | LitKind::Int(b, LitIntType::Unsuffixed) => attrs.push(InspirvAttribute::Location { location: b }),
+                                                    LitKind::Int(b, LitIntType::Unsigned(..))
+                                                    | LitKind::Int(b, LitIntType::Unsuffixed) => attrs.push(InspirvAttribute::Location { location: b }),
                                                     _ => panic!("attribute value need to be valid unsigned interger"),
                                                 };
                                             },
-
                                             "builtin" => {
-                                                use inspirv::core::enumeration::BuiltIn::*;
-                                                let builtin = match &*extract_attr_str(value) {
-                                                    // Should be all possible builtIn's for shaders 
-                                                    "Position" => Some(BuiltInPosition),
-                                                    "PointSize" => Some(BuiltInPointSize),
-                                                    "ClipDistance" => Some(BuiltInClipDistance),
-                                                    "CullDistance" => Some(BuiltInCullDistance),
-                                                    "VertexId" => Some(BuiltInVertexId),
-                                                    "InstanceId" => Some(BuiltInInstanceId),
-                                                    "PrimitiveId" => Some(BuiltInPrimitiveId),
-                                                    "Layer" => Some(BuiltInLayer),
-                                                    "InvocationId" => Some(BuiltInInvocationId),
-                                                    "ViewportIndex" => Some(BuiltInViewportIndex),
-                                                    "TessLevelOuter" => Some(BuiltInTessLevelOuter),
-                                                    "TessLevelInner" => Some(BuiltInTessLevelInner),
-                                                    "TessCoord" => Some(BuiltInTessCoord),
-                                                    "PatchVertices" => Some(BuiltInPatchVertices),
-                                                    "FragCoord" => Some(BuiltInFragCoord),
-                                                    "PointCoord" => Some(BuiltInPointCoord),
-                                                    "FrontFacing" => Some(BuiltInFrontFacing),
-                                                    "SampleId" => Some(BuiltInSampleId),
-                                                    "SamplePosition" => Some(BuiltInSamplePosition),
-                                                    "SampleMask" => Some(BuiltInSampleMask),
-                                                    "FragDepth" => Some(BuiltInFragDepth),
-                                                    "HelperInvocation" => Some(BuiltInHelperInvocation),
-                                                    "NumWorkgroups" => Some(BuiltInNumWorkgroups),
-                                                    "WorkgroupSize" => Some(BuiltInWorkgroupSize),
-                                                    "WorkgroupId" => Some(BuiltInWorkgroupId),
-                                                    "LocalInvocationId" => Some(BuiltInLocalInvocationId),
-                                                    "GlobalInvocationId" => Some(BuiltInGlobalInvocationId),
-                                                    "LocalInvocationIndex" => Some(BuiltInLocalInvocationIndex),
-                                                    "VertexIndex" => Some(BuiltInVertexIndex),
-                                                    "InstanceIndex" => Some(BuiltInInstanceIndex),
-                                                    _ => {
-                                                        self.tcx.sess.span_err(item.span, "Unknown `inspirv` builtin variable");
-                                                        None
-                                                    },
-                                                };
-
+                                                let builtin = builtin_from_str(&*extract_attr_str(value));
                                                 if let Some(builtin) = builtin {
                                                     attrs.push(InspirvAttribute::Builtin { builtin: builtin });
+                                                } else {
+                                                    self.tcx.sess.span_err(item.span, "Unknown `inspirv` builtin variable");
                                                 }
                                             },
 
                                             _ => {
-                                                self.tcx.sess.span_err(item.span,
-                                                                       "Unknown `inspirv` \
-                                                                        attribute name value item")
+                                                self.tcx.sess.span_err(item.span, "Unknown `inspirv` attribute name value item")
                                             }
                                         }
                                     },
@@ -468,98 +478,11 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         match *operand {
             Operand::Constant(ref c) => {
                 match c.literal {
-                    Literal::Value { value: ConstVal::Integral(ConstInt::U32(v)) } => v,
+                    Literal::Value { value: Integral(ConstInt::U32(v)) } => v,
                     _ => bug!("Expected u32 constant `{:?}", operand)
                 }
             }
             _ => bug!("Expected constant operand `{:?}`", operand)
-        }
-    }
-
-    fn trans_operand(&mut self, block: &mut Block, operand: &Operand<'tcx>) -> SpirvOperand {
-        use rustc::mir::repr::Operand::*;
-        match *operand {
-            Consume(ref lvalue) => {
-                let lvalue = self.resolve_lvalue(lvalue);
-                if let Some(lvalue) = lvalue {
-                    let lvalue = self.transform_lvalue(block, lvalue);
-                    SpirvOperand::Consume(lvalue)
-                } else {
-                    println!("Unable to resolve rvalue operand {:?}", lvalue);
-                    SpirvOperand::None
-                }
-            }
-
-            Constant(ref c) => {
-                match c.literal {
-                    Literal::Item { def_id, .. } => {
-                        SpirvOperand::FnCall(def_id)
-                    }
-                    Literal::Value { ref value } => {
-                        use rustc::mir::repr::ConstVal::*;
-                        match *value {
-                            Float(ConstFloat::F32(v)) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Float(ConstValueFloat::F32(v)))),
-                            Float(ConstFloat::F64(v)) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Float(ConstValueFloat::F64(v)))),
-                            Float(ConstFloat::FInfer { .. }) => {
-                                bug!("MIR must not use `{:?}`", c.literal)
-                            }
-                            Integral(ConstInt::I8(v)) => {
-                                SpirvOperand::Constant(self.builder
-                                    .define_constant(module::Constant::Scalar(ConstValue::I8(v))))
-                            }
-                            Integral(ConstInt::I16(v)) => {
-                                SpirvOperand::Constant(self.builder
-                                    .define_constant(module::Constant::Scalar(ConstValue::I16(v))))
-                            }
-                            Integral(ConstInt::I32(v)) => {
-                                SpirvOperand::Constant(self.builder
-                                    .define_constant(module::Constant::Scalar(ConstValue::I32(v))))
-                            }
-                            Integral(ConstInt::I64(v)) => {
-                                SpirvOperand::Constant(self.builder
-                                    .define_constant(module::Constant::Scalar(ConstValue::I64(v))))
-                            }
-                            Integral(ConstInt::Isize(_v)) => SpirvOperand::None,
-                            // {
-                            // SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Isize(v))))
-                            // },
-                            Integral(ConstInt::U8(v)) => {
-                                SpirvOperand::Constant(self.builder
-                                    .define_constant(module::Constant::Scalar(ConstValue::U8(v))))
-                            }
-                            Integral(ConstInt::U16(v)) => {
-                                SpirvOperand::Constant(self.builder
-                                    .define_constant(module::Constant::Scalar(ConstValue::U16(v))))
-                            }
-                            Integral(ConstInt::U32(v)) => {
-                                SpirvOperand::Constant(self.builder
-                                    .define_constant(module::Constant::Scalar(ConstValue::U32(v))))
-                            }
-                            Integral(ConstInt::U64(v)) => {
-                                SpirvOperand::Constant(self.builder
-                                    .define_constant(module::Constant::Scalar(ConstValue::U64(v))))
-                            }
-                            Integral(ConstInt::Usize(_v)) => SpirvOperand::None,
-                            // {
-                            // SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Usize(v))))
-                            // },
-                            Bool(val) => SpirvOperand::Constant(self.builder.define_constant(module::Constant::Scalar(ConstValue::Bool(val)))),
-                            Char(_val) => SpirvOperand::None,
-                            Integral(ConstInt::Infer(_)) |
-                            Integral(ConstInt::InferSigned(_)) => bug!("MIR must not use `{:?}`", c.literal),
-                            Str(_) => SpirvOperand::None, // TODO: unsupported
-                            ByteStr(ref _v) => SpirvOperand::None, // TODO: unsupported?
-                            Struct(_) |
-                            Tuple(_) |
-                            Array(..) |
-                            Repeat(..) |
-                            Function(_) => bug!("MIR must not use `{:?}` (which refers to a local ID)", c.literal),
-                            Dummy => bug!(),
-                        }
-                    }
-                    Literal::Promoted { .. /* ref index */ } => SpirvOperand::None,
-                }
-            }
         }
     }
 
@@ -851,243 +774,17 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         for (i, bb) in mir.basic_blocks().iter().enumerate() {
             println!("bb{}: {:#?}", i, bb);
 
-            let mut block = &mut fn_module.blocks[i];
+            let mut block_ctxt = InspirvBlock {
+                ctxt: self,
+                block: &mut fn_module.blocks[i],
+                labels: &block_labels,
+            };
 
             for stmt in &bb.statements {
-                match stmt.kind {
-                    StatementKind::Assign(ref lvalue, ref rvalue) => {
-                        println!("{:?}", (lvalue, rvalue));
-                        
-                        if let Some(lvalue) = self.resolve_lvalue(lvalue) {
-                            let lvalue = self.transform_lvalue(block, lvalue);
-                        
-                            match lvalue {
-                                SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return(lvalue_id, lvalue_ty) => {
-                                    use rustc::mir::repr::Rvalue::*;
-                                    match *rvalue {
-                                        Use(ref operand) => {
-                                            let op = self.trans_operand(block, operand);
-                                            match op {
-                                                SpirvOperand::Constant(op_id) => {
-                                                    block.emit_instruction(OpStore(lvalue_id, op_id, None));
-                                                }
-                                                SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
-                                                    let op_id = self.builder.alloc_id();
-                                                    block.emit_instruction(OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None));
-                                                    block.emit_instruction(OpStore(lvalue_id, op_id, None));
-                                                }
-                                                SpirvOperand::Consume(SpirvLvalue::SignatureStruct(ref interfaces, _)) => {
-                                                    let ids = interfaces.iter().map(|interface| {
-                                                        let id = self.builder.alloc_id();
-                                                        block.emit_instruction(OpLoad(self.builder.define_type(&interface.1), id, interface.0, None));
-                                                        id
-                                                    }).collect::<Vec<_>>();
-                                                    let composite_id = self.builder.alloc_id();
-                                                    block.emit_instruction(OpCompositeConstruct(self.builder.define_type(&lvalue_ty), composite_id, ids));
-                                                    block.emit_instruction(OpStore(lvalue_id, composite_id, None));
-                                                }
-                                                _ => self.tcx.sess.span_err(stmt.source_info.span,
-                                                                   "inspirv: Unsupported rvalue!"),
-                                            }
-                                        }
-
-                                        /// [x; 32]
-                                        Repeat(ref _operand, ref _times) => {}
-
-                                        Ref(_, _, _) => {
-                                            self.tcx.sess.span_err(stmt.source_info.span,
-                                                                   "inspirv: Unsupported rvalue reference!")
-                                        }
-
-                                        /// length of a [X] or [X;n] value
-                                        Len(_ /* ref val */) => {}
-
-                                        Cast(ref kind, ref operand, ty) => {
-                                            if *kind != CastKind::Misc {
-                                                self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast kind!")
-                                            } else {
-                                                let op = self.trans_operand(block, operand);
-                                                let cast_ty = self.rust_ty_to_inspirv(ty);
-                                                match op {
-                                                    SpirvOperand::Constant(_op_id) => {
-                                                        // Why!? ):
-                                                        self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported const cast rvalue (soon)!")
-                                                        // block.emit_instruction(OpStore(lvalue_id, op_id, None));
-                                                    }
-                                                    SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
-                                                        let op_id = self.builder.alloc_id();
-                                                        block.emit_instruction(OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None));
-                                                        // TODO: add cast conversions
-                                                        match (cast_ty, op_ty) {
-                                                            _ => self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast conversion!"),
-                                                        }
-
-                                                        block.emit_instruction(OpStore(lvalue_id, op_id, None));
-                                                    }
-                                                    _ => self.tcx.sess.span_err(stmt.source_info.span,
-                                                                       "inspirv: Unsupported cast rvalue!"),
-                                                }
-                                            }
-                                        }
-
-                                        BinaryOp(ref op, ref left, ref right) |
-                                        CheckedBinaryOp(ref op, ref left, ref right) => {
-                                            let left = self.trans_operand(block, left);
-                                            let right = self.trans_operand(block, right);
-                                            println!("binop: {:?}", op);
-
-                                            match (left, right) {
-                                                (SpirvOperand::Consume(SpirvLvalue::Variable(left_id, left_ty, _)),
-                                                 SpirvOperand::Consume(SpirvLvalue::Variable(right_id, right_ty, _))) => {
-                                                    self.emit_binop(
-                                                        *op, block,
-                                                        lvalue_id, lvalue_ty,
-                                                        left_id, left_ty,
-                                                        right_id, right_ty,
-                                                    );
-                                                }
-
-                                                // TODO:
-                                                _ => (),
-                                            }
-                                        }
-
-                                        UnaryOp(ref op, ref operand) => {
-                                            let _operand = self.trans_operand(block, operand);
-                                            println!("unop: {:?}", op);
-                                            // TODO
-                                        }
-
-                                        Aggregate(ref _kind, ref _operands) => {}
-
-                                        Box(..) => {
-                                            self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid box r-value")
-                                        }
-                                        InlineAsm { .. } => {
-                                            self.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid inline asm")
-                                        }
-                                    }
-                                }
-
-                                SpirvLvalue::SignatureStruct(ref interfaces, _) => {
-                                    use rustc::mir::repr::Rvalue::*;
-                                    match *rvalue {
-                                        Use(ref _operand) => {
-                                            // TODO:
-                                            self.tcx.sess.span_warn(stmt.source_info.span,
-                                                        "inspirv: Unhandled use-assignment for interfaces (soon)!")
-                                        }
-
-                                        Aggregate(ref _kind, ref operands) => {
-                                            for (operand, interface) in operands.iter().zip(interfaces.iter()) {
-                                                let op = self.trans_operand(block, operand);
-                                                match op {
-                                                    SpirvOperand::Constant(op_id) => {
-                                                        block.emit_instruction(OpStore(interface.0, op_id, None));
-                                                    }
-                                                    SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
-                                                        let op_id = self.builder.alloc_id();
-                                                        block.emit_instruction(OpLoad(self.builder.define_type(&op_ty), op_id, op_ptr_id, None));
-                                                        block.emit_instruction(OpStore(interface.0, op_id, None));
-                                                    }
-                                                    _ => self.tcx.sess.span_err(stmt.source_info.span,
-                                                                       "inspirv: Unsupported aggregate operand!"),
-                                                }
-                                            }
-                                        }
-
-                                        _ => bug!("Unexpected rvalue for an interface ({:?})", rvalue), // TODO: really a bug?
-                                    }
-                                }
-
-                                SpirvLvalue::Ignore => (),
-                                SpirvLvalue::AccessChain(..) => unreachable!(),        
-                            }
-                        } else {
-                            self.tcx.sess.span_warn(stmt.source_info.span, "inspirv: Unhandled stmnt as lvalue couldn't be resolved!");
-                        }
-                    }
-                    // Translation only
-                    StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
-                    StatementKind::SetDiscriminant { .. } => println!("{:?}", stmt.kind),
-                }
+                block_ctxt.trans_stmnt(stmt);
             }
 
-            match bb.terminator().kind {
-                use rustc::mir::repr::TerminatorKind::*;
-                Goto { ref target } => {
-                    block.branch_instr = Some(BranchInstruction::Branch(OpBranch(block_labels[*target])));
-                }
-
-                Return => {
-                    // TODO: low: handle return value
-                    block.branch_instr =
-                        Some(BranchInstruction::Return(OpReturn));
-                }
-
-                Unreachable => {
-                    block.branch_instr =
-                        Some(BranchInstruction::Unreachable(OpUnreachable));
-                }
-
-                // &If { cond, targets } => { },
-                // &Switch { discr, adt_def, targets } => { },
-                // &SwitchInt { discr, switch_ty, values, targets } => { },
-                // &Resume => { },
-                // &Drop { location, target, unwind } => { },
-                // &DropAndReplace { location, value, target, unwind } => { },
-
-                Call { ref func, ref args, ref destination, .. } => {
-                    let func_op = self.trans_operand(block, func);
-                    match func_op {
-                        SpirvOperand::FnCall(def_id) => {
-                            let func_id = self.tcx.map.as_local_node_id(def_id).expect("Function is not in local crate!");
-                            let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(func_id));
-
-                            let intrinsic = attrs.iter().find(|attr| match **attr {
-                                InspirvAttribute::Intrinsic (..) => true,
-                                _ => false,
-                            });
-
-                            println!("{:?}",intrinsic);
-
-                            let (lvalue, next_block) = destination.clone().expect("Call without destination, interesting!");
-                            let lvalue =  self.resolve_lvalue(&lvalue).map(|lvalue| self.transform_lvalue(block, lvalue)).expect("Unhandled lvalue");
-
-                            // Translate function call
-                            let id = if let Some(&InspirvAttribute::Intrinsic(intrinsic)) = intrinsic {
-                                self.emit_intrinsic(intrinsic, block, args)
-                            } else {
-                                panic!("Unhandled function call")  // TODO: normal function call
-                            };
-
-                            // Store return value into lvalue destination
-                            match lvalue {
-                                SpirvLvalue::Variable(lvalue_id, _, _) | SpirvLvalue::Return(lvalue_id, _) => {
-                                    block.emit_instruction(OpStore(lvalue_id, id, None));
-                                },
-
-                                SpirvLvalue::Ignore => (),
-
-                                _ => self.tcx.sess.span_err(bb.terminator().source_info.span, "inspirv: Unhandled lvalue for call terminator!"),
-                            }
-
-                            block.branch_instr = Some(BranchInstruction::Branch(OpBranch(block_labels[next_block])));
-                        }
-
-                        _ => bug!("Unexpected operand type, expected `FnCall` ({:?})", func_op),
-                    }
-                },
-                //
-
-                Assert { ref target, .. } => {
-                    // Ignore the actual asset
-                    // TODO: correct behaviour? some conditions?
-                    block.branch_instr = Some(BranchInstruction::Branch(OpBranch(block_labels[*target])));
-                },
-                
-                _ => { println!("Unhandled terminator kind: {:?}", bb.terminator().kind); }, //unimplemented!(),
-            }
+            block_ctxt.trans_terminator(bb.terminator());
         }
 
         // Push function and clear variable stack
@@ -1095,147 +792,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         self.arg_ids = IndexVec::new();
         self.var_ids = IndexVec::new();
         self.temp_ids = IndexVec::new();
-    }
-
-    fn emit_binop(&mut self, op: BinOp, block: &mut Block, result_id: Id, result_ty: Type, left_id: Id, left_ty: Type, right_id: Id, right_ty: Type) {
-        let left_ptr_id = self.builder.alloc_id();
-        let right_ptr_id = self.builder.alloc_id();
-
-        // load variable values
-        let op_load_left = OpLoad(self.builder.define_type(&left_ty), left_ptr_id, left_id, None);
-        let op_load_right = OpLoad(self.builder.define_type(&right_ty), right_ptr_id, right_id, None);
-        block.emit_instruction(op_load_left);
-        block.emit_instruction(op_load_right);
-
-        // emit addition instruction
-        let add_result = self.builder.alloc_id();
-        let op_binop: instruction::Instruction = match (op, &left_ty, &right_ty) {
-            (BinOp::Add, &Type::Int(..), &Type::Int(..)) => {
-                OpIAdd(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
-            }
-
-            (BinOp::Add, &Type::Float(..), &Type::Float(..)) => {
-                OpFAdd(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
-            }
-
-            (BinOp::Div, &Type::Float(..), &Type::Float(..)) => {
-                OpFDiv(self.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
-            }
-
-            _ => bug!("Unexpected binop combination ({:?})", (op, left_ty, right_ty)),
-        };
-
-        block.emit_instruction(op_binop);
-        
-        // store
-        block.emit_instruction(OpStore(result_id, add_result, None));
-    }
-
-    fn emit_intrinsic(&mut self, intrinsic: Intrinsic, block: &mut Block, args: &[Operand<'tcx>]) -> Id {
-        use self::Intrinsic::*;
-        let args_ops = args.iter().map(|arg| self.trans_operand(block, arg)).collect::<Vec<_>>();
-        let component_ids = args_ops.iter().filter_map(
-                                |arg| match *arg {
-                                    SpirvOperand::Constant(c) => Some(c),
-                                    SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
-                                        let op_id = self.builder.alloc_id();
-                                        let op_load = OpLoad(self.builder.define_type(op_ty), op_id, op_ptr_id, None);
-                                        block.emit_instruction(op_load);
-                                        Some(op_id)
-                                    }
-                                    _ => None
-                                }).collect::<Vec<_>>();
-
-        match intrinsic {
-            VectorNew { components } => self.emit_intrinsic_vector_new(components, block, args_ops, component_ids),
-            Swizzle { components_out, components_in } => self.emit_instrinsic_swizzle(
-                                                                    components_in,
-                                                                    components_out,
-                                                                    block,
-                                                                    args,
-                                                                    args_ops,
-                                                                    component_ids,
-                                                              ),
-            Shuffle { components_out:4 , components_in0: 4, components_in1: 4 } => {
-                let ty = Type::Vector(Box::new(Type::Float(32)), 4);
-                if args_ops[2..].iter().all(|arg| arg.is_constant()) {
-                    // all args are constants!
-                    let result_id = self.builder.alloc_id();
-                    // components
-                    let comp_x = self.extract_u32_from_operand(&args[2]);
-                    if comp_x >= 8 { bug!{"inspirv: shuffle component `x` out of range {:?}", comp_x} }
-                    let comp_y = self.extract_u32_from_operand(&args[3]);
-                    if comp_y >= 8 { bug!{"inspirv: shuffle component `y` out of range {:?}", comp_y} }
-                    let comp_z = self.extract_u32_from_operand(&args[4]);
-                    if comp_z >= 8 { bug!{"inspirv: shuffle component `z` out of range {:?}", comp_z} }
-                    let comp_w = self.extract_u32_from_operand(&args[5]);
-                    if comp_w >= 8 { bug!{"inspirv: shuffle component `w` out of range {:?}", comp_w} }
-                    block.emit_instruction(
-                        OpVectorShuffle(
-                            self.builder.define_type(&ty),
-                            result_id,
-                            component_ids[0],
-                            component_ids[1],
-                            vec![
-                                LiteralInteger(comp_x),
-                                LiteralInteger(comp_y),
-                                LiteralInteger(comp_z),
-                                LiteralInteger(comp_w),
-                            ],
-                        )
-                    );
-                    result_id
-                } else {
-                    panic!("Unhandled dynamic `shuffle4`")
-                }
-            }
-            _ => bug!("Unknown function call intrinsic")
-        }
-    }
-
-    fn emit_intrinsic_vector_new(&mut self, num_components: u32, block: &mut Block, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
-        assert!(num_components as usize == component_ids.len());
-        let ty = Type::Vector(Box::new(Type::Float(32)), num_components as u32);
-        if args.iter().all(|arg| arg.is_constant()) {
-            // all args are constants!
-            let constant = module::Constant::Composite(ty, component_ids);
-            self.builder.define_constant(constant)
-        } else {
-            let composite_id = self.builder.alloc_id();
-            block.emit_instruction(
-                OpCompositeConstruct(self.builder.define_type(&ty), composite_id, component_ids)
-            );
-            composite_id
-        }
-    }
-
-    fn emit_instrinsic_swizzle(&mut self, num_input_components: u32, num_output_components: u32, block: &mut Block, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
-        assert!(num_output_components as usize == component_ids.len());
-        let ty = Type::Vector(Box::new(Type::Float(32)), num_output_components as u32);
-        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
-            // all args are constants!
-            let result_id = self.builder.alloc_id();
-            // components
-            let components = (0..num_output_components as usize).map(|i| {
-                let component = self.extract_u32_from_operand(&args[i+1]);
-                if component >= num_input_components as u32 {
-                    bug!{"inspirv: swizzle component({:?}) out of range {:?}", i, component}
-                }
-                LiteralInteger(component)
-            }).collect::<Vec<_>>();
-            block.emit_instruction(
-                OpVectorShuffle(
-                    self.builder.define_type(&ty),
-                    result_id,
-                    component_ids[0],
-                    component_ids[0],
-                    components
-                )
-            );
-            result_id
-        } else {
-            panic!("Unhandled dynamic swizzle!")
-        }
     }
 
     // TODO: low: We could cache some aggregated types for faster compilation
@@ -1290,6 +846,442 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             ty::TyRawPtr(..) => { println!("{:?}", t.sty); unimplemented!() },
 
             _ => { println!("{:?}", t.sty); unimplemented!() },
+        }
+    }
+}
+
+impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
+    fn trans_stmnt(&mut self, stmt: &Statement<'tcx>) {
+        match stmt.kind {
+            StatementKind::Assign(ref lvalue, ref rvalue) => {
+                println!("{:?}", (lvalue, rvalue));
+                if let Some(lvalue) = self.ctxt.resolve_lvalue(lvalue) {
+                    let lvalue = self.ctxt.transform_lvalue(self.block, lvalue);
+                
+                    match lvalue {
+                        SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return(lvalue_id, lvalue_ty) => {
+                            use rustc::mir::repr::Rvalue::*;
+                            match *rvalue {
+                                Use(ref operand) => {
+                                    let op = self.trans_operand(operand);
+                                    match op {
+                                        SpirvOperand::Constant(op_id) => {
+                                            self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
+                                        }
+                                        SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
+                                            let op_id = self.ctxt.builder.alloc_id();
+                                            self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&op_ty), op_id, op_ptr_id, None));
+                                            self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
+                                        }
+                                        SpirvOperand::Consume(SpirvLvalue::SignatureStruct(ref interfaces, _)) => {
+                                            let ids = interfaces.iter().map(|interface| {
+                                                let id = self.ctxt.builder.alloc_id();
+                                                self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&interface.1), id, interface.0, None));
+                                                id
+                                            }).collect::<Vec<_>>();
+                                            let composite_id = self.ctxt.builder.alloc_id();
+                                            self.block.emit_instruction(OpCompositeConstruct(self.ctxt.builder.define_type(&lvalue_ty), composite_id, ids));
+                                            self.block.emit_instruction(OpStore(lvalue_id, composite_id, None));
+                                        }
+                                        _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span,
+                                                           "inspirv: Unsupported rvalue!"),
+                                    }
+                                }
+
+                                /// [x; 32]
+                                Repeat(ref _operand, ref _times) => {}
+
+                                Ref(_, _, _) => {
+                                    self.ctxt.tcx.sess.span_err(stmt.source_info.span,
+                                                           "inspirv: Unsupported rvalue reference!")
+                                }
+
+                                /// length of a [X] or [X;n] value
+                                Len(_ /* ref val */) => {}
+
+                                Cast(ref kind, ref operand, ty) => {
+                                    if *kind != CastKind::Misc {
+                                        self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast kind!")
+                                    } else {
+                                        let op = self.trans_operand(operand);
+                                        let cast_ty = self.ctxt.rust_ty_to_inspirv(ty);
+                                        match op {
+                                            SpirvOperand::Constant(_op_id) => {
+                                                // Why!? ):
+                                                self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported const cast rvalue (soon)!")
+                                                // self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
+                                            }
+                                            SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
+                                                let op_id = self.ctxt.builder.alloc_id();
+                                                self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&op_ty), op_id, op_ptr_id, None));
+                                                // TODO: add cast conversions
+                                                match (cast_ty, op_ty) {
+                                                    _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast conversion!"),
+                                                }
+
+                                                self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
+                                            }
+                                            _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span,
+                                                               "inspirv: Unsupported cast rvalue!"),
+                                        }
+                                    }
+                                }
+
+                                BinaryOp(ref op, ref left, ref right) |
+                                CheckedBinaryOp(ref op, ref left, ref right) => {
+                                    let left = self.trans_operand(left);
+                                    let right = self.trans_operand(right);
+                                    println!("binop: {:?}", op);
+
+                                    match (left, right) {
+                                        (SpirvOperand::Consume(SpirvLvalue::Variable(left_id, left_ty, _)),
+                                         SpirvOperand::Consume(SpirvLvalue::Variable(right_id, right_ty, _))) => {
+                                            self.emit_binop(
+                                                *op,
+                                                lvalue_id, lvalue_ty,
+                                                left_id, left_ty,
+                                                right_id, right_ty,
+                                            );
+                                        }
+
+                                        // TODO:
+                                        _ => (),
+                                    }
+                                }
+
+                                UnaryOp(ref op, ref operand) => {
+                                    let _operand = self.trans_operand(operand);
+                                    println!("unop: {:?}", op);
+                                    // TODO
+                                }
+
+                                Aggregate(ref _kind, ref _operands) => {}
+
+                                Box(..) => {
+                                    self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid box r-value")
+                                }
+                                InlineAsm { .. } => {
+                                    self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid inline asm")
+                                }
+                            }
+                        }
+
+                        SpirvLvalue::SignatureStruct(ref interfaces, _) => {
+                            use rustc::mir::repr::Rvalue::*;
+                            match *rvalue {
+                                Use(ref _operand) => {
+                                    // TODO:
+                                    self.ctxt.tcx.sess.span_warn(stmt.source_info.span,
+                                                "inspirv: Unhandled use-assignment for interfaces (soon)!")
+                                }
+
+                                Aggregate(ref _kind, ref operands) => {
+                                    for (operand, interface) in operands.iter().zip(interfaces.iter()) {
+                                        let op = self.trans_operand(operand);
+                                        match op {
+                                            SpirvOperand::Constant(op_id) => {
+                                                self.block.emit_instruction(OpStore(interface.0, op_id, None));
+                                            }
+                                            SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
+                                                let op_id = self.ctxt.builder.alloc_id();
+                                                self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&op_ty), op_id, op_ptr_id, None));
+                                                self.block.emit_instruction(OpStore(interface.0, op_id, None));
+                                            }
+                                            _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span,
+                                                               "inspirv: Unsupported aggregate operand!"),
+                                        }
+                                    }
+                                }
+
+                                _ => bug!("Unexpected rvalue for an interface ({:?})", rvalue), // TODO: really a bug?
+                            }
+                        }
+
+                        SpirvLvalue::Ignore => (),
+                        SpirvLvalue::AccessChain(..) => unreachable!(),        
+                    }
+                } else {
+                    self.ctxt.tcx.sess.span_warn(stmt.source_info.span, "inspirv: Unhandled stmnt as lvalue couldn't be resolved!");
+                }
+            }
+            // Translation only
+            StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
+            StatementKind::SetDiscriminant { .. } => println!("{:?}", stmt.kind),
+        }
+    }
+
+    fn trans_terminator(&mut self, terminator: &Terminator<'tcx>) {
+        use rustc::mir::repr::TerminatorKind::*;
+        match terminator.kind {
+            Goto { ref target } => {
+                self.block.branch_instr = Some(BranchInstruction::Branch(OpBranch(self.labels[*target])));
+            }
+
+            Return => {
+                // TODO: low: handle return value
+                self.block.branch_instr =
+                    Some(BranchInstruction::Return(OpReturn));
+            }
+
+            Unreachable => {
+                self.block.branch_instr =
+                    Some(BranchInstruction::Unreachable(OpUnreachable));
+            }
+
+            // &If { cond, targets } => { },
+            // &Switch { discr, adt_def, targets } => { },
+            // &SwitchInt { discr, switch_ty, values, targets } => { },
+            // &Resume => { },
+            // &Drop { location, target, unwind } => { },
+            // &DropAndReplace { location, value, target, unwind } => { },
+
+            Call { ref func, ref args, ref destination, .. } => {
+                let func_op = self.trans_operand(func);
+                match func_op {
+                    SpirvOperand::FnCall(def_id) => {
+                        let func_id = self.ctxt.tcx.map.as_local_node_id(def_id).expect("Function is not in local crate!");
+                        let attrs = self.ctxt.parse_inspirv_attributes(self.ctxt.tcx.map.attrs(func_id));
+
+                        let intrinsic = attrs.iter().find(|attr| match **attr {
+                            InspirvAttribute::Intrinsic (..) => true,
+                            _ => false,
+                        });
+
+                        println!("{:?}",intrinsic);
+
+                        let (lvalue, next_block) = destination.clone().expect("Call without destination, interesting!");
+                        let lvalue = self.ctxt.resolve_lvalue(&lvalue).map(|lvalue| self.ctxt.transform_lvalue(self.block, lvalue)).expect("Unhandled lvalue");
+
+                        // Translate function call
+                        let id = if let Some(&InspirvAttribute::Intrinsic(intrinsic)) = intrinsic {
+                            self.emit_intrinsic(intrinsic, args)
+                        } else {
+                            panic!("Unhandled function call")  // TODO: normal function call
+                        };
+
+                        // Store return value into lvalue destination
+                        match lvalue {
+                            SpirvLvalue::Variable(lvalue_id, _, _) | SpirvLvalue::Return(lvalue_id, _) => {
+                                self.block.emit_instruction(OpStore(lvalue_id, id, None));
+                            },
+
+                            SpirvLvalue::Ignore => (),
+
+                            _ => self.ctxt.tcx.sess.span_err(terminator.source_info.span, "inspirv: Unhandled lvalue for call terminator!"),
+                        }
+
+                        self.block.branch_instr = Some(BranchInstruction::Branch(OpBranch(self.labels[next_block])));
+                    }
+
+                    _ => bug!("Unexpected operand type, expected `FnCall` ({:?})", func_op),
+                }
+            },
+            //
+
+            Assert { ref target, .. } => {
+                // Ignore the actual asset
+                // TODO: correct behaviour? some conditions?
+                self.block.branch_instr = Some(BranchInstruction::Branch(OpBranch(self.labels[*target])));
+            },
+            
+            _ => { println!("Unhandled terminator kind: {:?}", terminator.kind); }, //unimplemented!(),
+        }
+    }
+
+    fn trans_operand(&mut self, operand: &Operand<'tcx>) -> SpirvOperand {
+        use rustc::mir::repr::Operand::*;
+        match *operand {
+            Consume(ref lvalue) => {
+                let lvalue = self.ctxt.resolve_lvalue(lvalue);
+                if let Some(lvalue) = lvalue {
+                    let lvalue = self.ctxt.transform_lvalue(self.block, lvalue);
+                    SpirvOperand::Consume(lvalue)
+                } else {
+                    println!("Unable to resolve rvalue operand {:?}", lvalue);
+                    SpirvOperand::None
+                }
+            }
+
+            Constant(ref c) => {
+                match c.literal {
+                    Literal::Item { def_id, .. } => {
+                        SpirvOperand::FnCall(def_id)
+                    }
+                    Literal::Value { ref value } => {
+                        let constant = match *value {
+                            Float(ConstFloat::F32(v)) => module::Constant::Float(ConstValueFloat::F32(v)),
+                            Float(ConstFloat::F64(v)) => module::Constant::Float(ConstValueFloat::F64(v)),
+                            Float(ConstFloat::FInfer { .. }) => bug!("MIR must not use `{:?}`", c.literal),
+                            Integral(ConstInt::I8(v)) => module::Constant::Scalar(ConstValue::I8(v)),
+                            Integral(ConstInt::I16(v)) => module::Constant::Scalar(ConstValue::I16(v)),
+                            Integral(ConstInt::I32(v)) => module::Constant::Scalar(ConstValue::I32(v)),
+                            Integral(ConstInt::I64(v)) => module::Constant::Scalar(ConstValue::I64(v)),
+                            Integral(ConstInt::Isize(_v)) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
+                            Integral(ConstInt::U8(v)) => module::Constant::Scalar(ConstValue::U8(v)),
+                            Integral(ConstInt::U16(v)) => module::Constant::Scalar(ConstValue::U16(v)),
+                            Integral(ConstInt::U32(v)) => module::Constant::Scalar(ConstValue::U32(v)),
+                            Integral(ConstInt::U64(v)) => module::Constant::Scalar(ConstValue::U64(v)),
+                            Integral(ConstInt::Usize(_v)) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
+                            Bool(val) => module::Constant::Scalar(ConstValue::Bool(val)),
+                            Char(_val) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
+                            Integral(ConstInt::Infer(_))
+                            | Integral(ConstInt::InferSigned(_)) => bug!("MIR must not use `{:?}`", c.literal),
+                            Str(_) => bug!("Currently unsupported constant literal `{:?}`", c.literal), // TODO: unsupported
+                            ByteStr(ref _v) => bug!("Currently unsupported constant literal `{:?}`", c.literal), // TODO: unsupported?
+                            Struct(_)
+                            | Tuple(_)
+                            | Array(..)
+                            | Repeat(..)
+                            | Function(_) => bug!("MIR must not use `{:?}` (which refers to a local ID)", c.literal),
+                            Dummy => bug!(),
+                        };
+
+                        let constant_id = self.ctxt.builder.define_constant(constant);
+                        SpirvOperand::Constant(constant_id)
+                    }
+                    Literal::Promoted { .. /* ref index */ } => SpirvOperand::None,
+                }
+            }
+        }
+    }
+
+    fn emit_binop(&mut self, op: BinOp, result_id: Id, result_ty: Type, left_id: Id, left_ty: Type, right_id: Id, right_ty: Type) {
+        let left_ptr_id = self.ctxt.builder.alloc_id();
+        let right_ptr_id = self.ctxt.builder.alloc_id();
+
+        // load variable values
+        let op_load_left = OpLoad(self.ctxt.builder.define_type(&left_ty), left_ptr_id, left_id, None);
+        let op_load_right = OpLoad(self.ctxt.builder.define_type(&right_ty), right_ptr_id, right_id, None);
+        self.block.emit_instruction(op_load_left);
+        self.block.emit_instruction(op_load_right);
+
+        // emit addition instruction
+        let add_result = self.ctxt.builder.alloc_id();
+        let op_binop: instruction::Instruction = match (op, &left_ty, &right_ty) {
+            (BinOp::Add, &Type::Int(..), &Type::Int(..)) => {
+                OpIAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            (BinOp::Add, &Type::Float(..), &Type::Float(..)) => {
+                OpFAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            (BinOp::Div, &Type::Float(..), &Type::Float(..)) => {
+                OpFDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            _ => bug!("Unexpected binop combination ({:?})", (op, left_ty, right_ty)),
+        };
+
+        self.block.emit_instruction(op_binop);
+        
+        // store
+        self.block.emit_instruction(OpStore(result_id, add_result, None));
+    }
+
+    fn emit_intrinsic(&mut self, intrinsic: Intrinsic, args: &[Operand<'tcx>]) -> Id {
+        use self::Intrinsic::*;
+        let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<Vec<_>>();
+        let component_ids = args_ops.iter().filter_map(
+                                |arg| match *arg {
+                                    SpirvOperand::Constant(c) => Some(c),
+                                    SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
+                                        let op_id = self.ctxt.builder.alloc_id();
+                                        let op_load = OpLoad(self.ctxt.builder.define_type(op_ty), op_id, op_ptr_id, None);
+                                        self.block.emit_instruction(op_load);
+                                        Some(op_id)
+                                    }
+                                    _ => None
+                                }).collect::<Vec<_>>();
+
+        match intrinsic {
+            VectorNew { components } => self.emit_intrinsic_vector_new(components, args_ops, component_ids),
+            Swizzle { components_out, components_in } => self.emit_instrinsic_swizzle(
+                                                                    components_in,
+                                                                    components_out,
+                                                                    args,
+                                                                    args_ops,
+                                                                    component_ids,
+                                                              ),
+            Shuffle { components_out:4 , components_in0: 4, components_in1: 4 } => {
+                let ty = Type::Vector(Box::new(Type::Float(32)), 4);
+                if args_ops[2..].iter().all(|arg| arg.is_constant()) {
+                    // all args are constants!
+                    let result_id = self.ctxt.builder.alloc_id();
+                    // components
+                    let comp_x = self.ctxt.extract_u32_from_operand(&args[2]);
+                    if comp_x >= 8 { bug!{"inspirv: shuffle component `x` out of range {:?}", comp_x} }
+                    let comp_y = self.ctxt.extract_u32_from_operand(&args[3]);
+                    if comp_y >= 8 { bug!{"inspirv: shuffle component `y` out of range {:?}", comp_y} }
+                    let comp_z = self.ctxt.extract_u32_from_operand(&args[4]);
+                    if comp_z >= 8 { bug!{"inspirv: shuffle component `z` out of range {:?}", comp_z} }
+                    let comp_w = self.ctxt.extract_u32_from_operand(&args[5]);
+                    if comp_w >= 8 { bug!{"inspirv: shuffle component `w` out of range {:?}", comp_w} }
+                    self.block.emit_instruction(
+                        OpVectorShuffle(
+                            self.ctxt.builder.define_type(&ty),
+                            result_id,
+                            component_ids[0],
+                            component_ids[1],
+                            vec![
+                                LiteralInteger(comp_x),
+                                LiteralInteger(comp_y),
+                                LiteralInteger(comp_z),
+                                LiteralInteger(comp_w),
+                            ],
+                        )
+                    );
+                    result_id
+                } else {
+                    panic!("Unhandled dynamic `shuffle4`")
+                }
+            }
+            _ => bug!("Unknown function call intrinsic")
+        }
+    }
+
+    fn emit_intrinsic_vector_new(&mut self, num_components: u32, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        assert!(num_components as usize == component_ids.len());
+        let ty = Type::Vector(Box::new(Type::Float(32)), num_components as u32);
+        if args.iter().all(|arg| arg.is_constant()) {
+            // all args are constants!
+            let constant = module::Constant::Composite(ty, component_ids);
+            self.ctxt.builder.define_constant(constant)
+        } else {
+            let composite_id = self.ctxt.builder.alloc_id();
+            self.block.emit_instruction(
+                OpCompositeConstruct(self.ctxt.builder.define_type(&ty), composite_id, component_ids)
+            );
+            composite_id
+        }
+    }
+
+    fn emit_instrinsic_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        assert!(num_output_components as usize == component_ids.len());
+        let ty = Type::Vector(Box::new(Type::Float(32)), num_output_components as u32);
+        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
+            // all args are constants!
+            let result_id = self.ctxt.builder.alloc_id();
+            // components
+            let components = (0..num_output_components as usize).map(|i| {
+                let component = self.ctxt.extract_u32_from_operand(&args[i+1]);
+                if component >= num_input_components as u32 {
+                    bug!{"inspirv: swizzle component({:?}) out of range {:?}", i, component}
+                }
+                LiteralInteger(component)
+            }).collect::<Vec<_>>();
+            self.block.emit_instruction(
+                OpVectorShuffle(
+                    self.ctxt.builder.define_type(&ty),
+                    result_id,
+                    component_ids[0],
+                    component_ids[0],
+                    components
+                )
+            );
+            result_id
+        } else {
+            panic!("Unhandled dynamic swizzle!")
         }
     }
 }
