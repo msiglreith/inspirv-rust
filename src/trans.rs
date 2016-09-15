@@ -26,6 +26,20 @@ use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueF
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Intrinsic {
+    Swizzle {
+        components_out: u32,
+        components_in: u32
+    },
+    Shuffle {
+        components_out: u32,
+        components_in0: u32,
+        components_in1: u32
+    },
+    VectorNew { components: u32 },
+}
+
 #[derive(Clone, Debug)]
 enum InspirvAttribute {
     Interface,
@@ -45,9 +59,7 @@ enum InspirvAttribute {
     Builtin {
         builtin: BuiltIn
     },
-    Intrinsic {
-        name: String,
-    },
+    Intrinsic(Intrinsic),
 }
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
@@ -262,10 +274,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                 }
                                             },
 
-                                            "intrinsic" => {
-                                                attrs.push(InspirvAttribute::Intrinsic { name: (*extract_attr_str(value)).to_string() });
-                                            },
-
                                             _ => {
                                                 self.tcx.sess.span_err(item.span,
                                                                        "Unknown `inspirv` \
@@ -333,6 +341,24 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                         components: components.unwrap()
                                                     });
                                                 }
+                                            }
+
+                                            // intrinsics with additional data `instrinsic(name(..))` or `instrinsic(name)`
+                                            "intrinsic" => {
+                                                // TODO: High
+
+                                                /*
+                                                Swizzle {
+                                                    components_out: u32,
+                                                    components_in: u32
+                                                },
+                                                Shuffle {
+                                                    components_out: u32,
+                                                    components_in0: u32,
+                                                    components_in1: u32
+                                                },
+                                                VectorNew { components: u32 },
+                                                */
                                             }
 
                                             _ => self.tcx.sess.span_err(item.span,
@@ -552,7 +578,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(id));
 
             // We don't translate builtin functions, these will be handled internally
-            if attrs.iter().any(|attr| match *attr { InspirvAttribute::CompilerBuiltin | InspirvAttribute::Intrinsic {..} => true, _ => false }) {
+            if attrs.iter().any(|attr| match *attr { InspirvAttribute::CompilerBuiltin | InspirvAttribute::Intrinsic(..) => true, _ => false }) {
                 return;
             }
 
@@ -1017,7 +1043,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                             let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(func_id));
 
                             let intrinsic = attrs.iter().find(|attr| match **attr {
-                                InspirvAttribute::Intrinsic { .. } => true,
+                                InspirvAttribute::Intrinsic (..) => true,
                                 _ => false,
                             });
 
@@ -1027,8 +1053,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                             let lvalue =  self.resolve_lvalue(&lvalue).map(|lvalue| self.transform_lvalue(block, lvalue)).expect("Unhandled lvalue");
 
                             // Translate function call
-                            let id = if let Some(&InspirvAttribute::Intrinsic { ref name }) = intrinsic {
-                                self.emit_intrinsic(name.as_str(), block, args)
+                            let id = if let Some(&InspirvAttribute::Intrinsic(intrinsic)) = intrinsic {
+                                self.emit_intrinsic(intrinsic, block, args)
                             } else {
                                 panic!("Unhandled function call")  // TODO: normal function call
                             };
@@ -1112,7 +1138,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         block.instructions.push(core_instruction::OpStore(result_id, add_result, None).into());
     }
 
-    fn emit_intrinsic(&mut self, intrinsic: &str, block: &mut Block, args: &[Operand<'tcx>]) -> Id {
+    fn emit_intrinsic(&mut self, intrinsic: Intrinsic, block: &mut Block, args: &[Operand<'tcx>]) -> Id {
+        use self::Intrinsic::*;
         let args_ops = args.iter().map(|arg| self.trans_operand(block, arg)).collect::<Vec<_>>();
         let component_ids = args_ops.iter().filter_map(
                                 |arg| match *arg {
@@ -1128,19 +1155,16 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                 }).collect::<Vec<_>>();
 
         match intrinsic {
-            "float2_new" => self.emit_intrinsic_floatX_new(2, block, args_ops, component_ids),
-            "float3_new" => self.emit_intrinsic_floatX_new(3, block, args_ops, component_ids),
-            "float4_new" => self.emit_intrinsic_floatX_new(4, block, args_ops, component_ids),
-            "float2_swizzle2" => self.emit_instrinsic_swizzle(2, 2, block, args, args_ops, component_ids),
-            "float2_swizzle3" => self.emit_instrinsic_swizzle(2, 3, block, args, args_ops, component_ids),
-            "float2_swizzle4" => self.emit_instrinsic_swizzle(2, 4, block, args, args_ops, component_ids),
-            "float3_swizzle2" => self.emit_instrinsic_swizzle(3, 2, block, args, args_ops, component_ids),
-            "float3_swizzle3" => self.emit_instrinsic_swizzle(3, 3, block, args, args_ops, component_ids),
-            "float3_swizzle4" => self.emit_instrinsic_swizzle(3, 4, block, args, args_ops, component_ids),
-            "float4_swizzle2" => self.emit_instrinsic_swizzle(4, 2, block, args, args_ops, component_ids),
-            "float4_swizzle3" => self.emit_instrinsic_swizzle(4, 3, block, args, args_ops, component_ids),
-            "float4_swizzle4" => self.emit_instrinsic_swizzle(4, 4, block, args, args_ops, component_ids),
-            "shuffle4_4x4" => {
+            VectorNew { components } => self.emit_intrinsic_vector_new(components, block, args_ops, component_ids),
+            Swizzle { components_out, components_in } => self.emit_instrinsic_swizzle(
+                                                                    components_in,
+                                                                    components_out,
+                                                                    block,
+                                                                    args,
+                                                                    args_ops,
+                                                                    component_ids,
+                                                              ),
+            Shuffle { components_out:4 , components_in0: 4, components_in1: 4 } => {
                 let ty = Type::Vector(Box::new(Type::Float(32)), 4);
                 if args_ops[2..].iter().all(|arg| arg.is_constant()) {
                     // all args are constants!
@@ -1177,8 +1201,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         }
     }
 
-    fn emit_intrinsic_floatX_new(&mut self, num_components: usize, block: &mut Block, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
-        assert!(num_components == component_ids.len());
+    fn emit_intrinsic_vector_new(&mut self, num_components: u32, block: &mut Block, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        assert!(num_components as usize == component_ids.len());
         let ty = Type::Vector(Box::new(Type::Float(32)), num_components as u32);
         if args.iter().all(|arg| arg.is_constant()) {
             // all args are constants!
@@ -1197,14 +1221,14 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         }
     }
 
-    fn emit_instrinsic_swizzle(&mut self, num_input_components: usize, num_output_components: usize, block: &mut Block, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
-        assert!(num_output_components == component_ids.len());
+    fn emit_instrinsic_swizzle(&mut self, num_input_components: u32, num_output_components: u32, block: &mut Block, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        assert!(num_output_components as usize == component_ids.len());
         let ty = Type::Vector(Box::new(Type::Float(32)), num_output_components as u32);
         if args_ops[1..].iter().all(|arg| arg.is_constant()) {
             // all args are constants!
             let result_id = self.builder.alloc_id();
             // components
-            let components = (0..num_output_components).map(|i| {
+            let components = (0..num_output_components as usize).map(|i| {
                 let component = self.extract_u32_from_operand(&args[i+1]);
                 if component >= num_input_components as u32 {
                     bug!{"inspirv: swizzle component({:?}) out of range {:?}", i, component}
