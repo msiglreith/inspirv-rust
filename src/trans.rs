@@ -316,7 +316,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                                         "components" => { // TODO: low: check > 1
                                                                             components = match value.node {
                                                                                 syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
-                                                                                _ => panic!("attribute value need to be interger"),
+                                                                                _ => panic!("attribute value needs to be interger (>2)"),
                                                                             }
                                                                         },
                                                                         "base" => {
@@ -358,22 +358,140 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
                                             // intrinsics with additional data `instrinsic(name(..))` or `instrinsic(name)`
                                             "intrinsic" => {
-                                                // TODO: High
+                                                match items[0].node {
+                                                    NestedMetaItemKind::MetaItem(ref item) => {
+                                                        match item.node {
+                                                            MetaItemKind::List(ref name, ref items) => {
+                                                                match &**name {
+                                                                    "shuffle" => {
+                                                                        let mut num_components_in0 = None;
+                                                                        let mut num_components_in1 = None;
+                                                                        let mut num_components_out = None;
+                                                                        for item in items {
+                                                                            match item.node {
+                                                                                NestedMetaItemKind::MetaItem(ref item) => {
+                                                                                    match item.node {
+                                                                                        MetaItemKind::NameValue(ref name, ref value) => {
+                                                                                            match &**name {
+                                                                                                "num_in0" => {
+                                                                                                    num_components_in0 = match value.node {
+                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
+                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
+                                                                                                    }
+                                                                                                },
+                                                                                                "num_in1" => {
+                                                                                                    num_components_in1 = match value.node {
+                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
+                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
+                                                                                                    }
+                                                                                                },
+                                                                                                "num_out" => {
+                                                                                                    num_components_out = match value.node {
+                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
+                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
+                                                                                                    }
+                                                                                                },
 
-                                                /*
-                                                Swizzle {
-                                                    components_out: u32,
-                                                    components_in: u32
-                                                },
-                                                Shuffle {
-                                                    components_out: u32,
-                                                    components_in0: u32,
-                                                    components_in1: u32
-                                                },
-                                                VectorNew { components: u32 },
-                                                */
+                                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` shuffle intrinsic attribute item"),
+                                                                                            }
+                                                                                        }
+                                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` shuffle intrinsic attribute item"),
+                                                                                    }
+                                                                                }
+                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` shuffle intrinsic attribute item"),
+                                                                            }
+                                                                        }
+                                                                        if num_components_in0.is_none() ||
+                                                                           num_components_in1.is_none() ||
+                                                                           num_components_out.is_none() {
+                                                                            self.tcx.sess.span_err(item.span, "`inspirv` shuffle misses `num_in0`, `num_in1` or `num_out` attributes");
+                                                                        } else {
+                                                                            let intrinsic = Intrinsic::Shuffle {
+                                                                                components_out: num_components_out.unwrap(),
+                                                                                components_in0: num_components_in0.unwrap(),
+                                                                                components_in1: num_components_in1.unwrap(),
+                                                                            };
+                                                                            attrs.push(InspirvAttribute::Intrinsic(intrinsic));
+                                                                        }
+                                                                    }
+                                                                    "swizzle" => {
+                                                                        let mut num_components_in = None;
+                                                                        let mut num_components_out = None;
+                                                                        for item in items {
+                                                                            match item.node {
+                                                                                NestedMetaItemKind::MetaItem(ref item) => {
+                                                                                    match item.node {
+                                                                                        MetaItemKind::NameValue(ref name, ref value) => {
+                                                                                            match &**name {
+                                                                                                "num_in" => {
+                                                                                                    num_components_in = match value.node {
+                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
+                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
+                                                                                                    }
+                                                                                                },
+                                                                                                "num_out" => {
+                                                                                                    num_components_out = match value.node {
+                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
+                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
+                                                                                                    }
+                                                                                                },
+
+                                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` swizzle intrinsic attribute item"),
+                                                                                            }
+                                                                                        }
+                                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` swizzle intrinsic attribute item"),
+                                                                                    }
+                                                                                }
+                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` swizzle intrinsic attribute item"),
+                                                                            }
+                                                                        }
+                                                                        if num_components_in.is_none() ||
+                                                                           num_components_out.is_none() {
+                                                                            self.tcx.sess.span_err(item.span, "`inspirv` swizzle misses `num_in` or `num_out` attributes");
+                                                                        } else {
+                                                                            let intrinsic = Intrinsic::Swizzle {
+                                                                                components_out: num_components_out.unwrap(),
+                                                                                components_in: num_components_in.unwrap(),
+                                                                            };
+                                                                            attrs.push(InspirvAttribute::Intrinsic(intrinsic));
+                                                                        }
+                                                                    }
+                                                                    "vector_new" => {
+                                                                        let mut components = None;
+                                                                        for item in items {
+                                                                            match item.node {
+                                                                                NestedMetaItemKind::Literal(ref literal) => {
+                                                                                    match literal.node {
+                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => components = Some(b as u32),
+                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
+                                                                                    }
+                                                                                }
+                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector_new intrinsic attribute item"),
+                                                                            }
+                                                                        }
+                                                                        if let Some(components) = components {
+                                                                            let intrinsic = Intrinsic::VectorNew {
+                                                                                components: components,
+                                                                            };
+                                                                            attrs.push(InspirvAttribute::Intrinsic(intrinsic));
+                                                                        } else {
+                                                                            self.tcx.sess.span_err(item.span, "`inspirv` vector_new misses components attributes");
+                                                                        }
+                                                                    }
+                                                                    _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` intrinsic"),
+                                                                } 
+                                                            }
+                                                            MetaItemKind::Word(ref name) => {
+                                                                match &**name {
+                                                                    _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` intrinsic"),
+                                                                }
+                                                            }
+                                                            _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` intrinsic attribute item"),
+                                                        }
+                                                    }
+                                                    _ => self.tcx.sess.span_err(items[0].span, "Unknown `inspirv` intrinsic attribute item"),
+                                                }
                                             }
-
                                             _ => self.tcx.sess.span_err(item.span,
                                                                        "Unknown `inspirv` \
                                                                         attribute list item"),
