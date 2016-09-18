@@ -15,6 +15,7 @@ use syntax;
 use syntax::ast::{LitKind, LitIntType, NodeId, IntTy, UintTy, FloatTy, MetaItemKind, NestedMetaItemKind};
 use std::collections::HashMap;
 use std::fs::File;
+use std::ops::Deref;
 use inspirv;
 use inspirv::instruction;
 use inspirv::types::*;
@@ -113,12 +114,57 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     v.trans();
 }
 
-type TypedId = (Id, Type);
+#[derive(Clone, Debug)]
+enum SpirvType {
+    NoRef(Type),
+    Ref(Type, Id),
+}
+
+impl SpirvType {
+    fn is_ref(&self) -> bool {
+        if let SpirvType::Ref(..) = *self {
+            true
+        } else {
+            false
+        }
+    }
+
+    fn ty(&self) -> &Type {
+        use self::SpirvType::*;
+        match *self {
+            NoRef(ref ty) => ty,
+            Ref(ref ty, _) => ty,
+        }
+    }
+}
+
+impl Into<Type> for SpirvType {
+    fn into(self) -> Type {
+        use self::SpirvType::*;
+        match self {
+            NoRef(ty) => ty,
+            Ref(ty, _) => ty,
+        }
+    }
+}
+
+impl Deref for SpirvType {
+    type Target = Type;
+    fn deref(&self) -> &Self::Target {
+        use self::SpirvType::*;
+        match *self {
+            NoRef(ref ty) => ty,
+            Ref(ref ty, _) => ty,
+        }
+    }
+}
+
+type TypedId = (Id, SpirvType);
 
 #[derive(Clone, Debug)]
 enum SpirvOperand {
     Consume(SpirvLvalue),
-    Constant(Id, Type),
+    Constant(Id, SpirvType),
     FnCall(DefId),
     None, // TODO: temp
 }
@@ -134,23 +180,23 @@ impl SpirvOperand {
 
 #[derive(Clone, Debug)]
 enum SpirvLvalue {
-    Variable(Id, Type, StorageClass),
+    Variable(Id, SpirvType, StorageClass),
     SignatureStruct(Vec<(Id, Type)>, StorageClass), // struct objects passed to functions, e.g. interfaces, constant buffer, ..
     AccessChain(Id, StorageClass, Vec<Id>, Type),
-    Return(Id, Type),
+    Return(TypedId),
     Ignore, // Ignore this lvalue, e.g. return = ()
 }
 
 #[derive(Clone)]
 enum FuncArg {
-    Argument(Argument),
+    Argument(TypedId),
     Interface(Vec<(Id, Type)>),
     ConstBuffer(Vec<(Id, Type)>),
 }
 
 #[derive(Clone)]
 enum FuncReturn {
-    Return(LocalVar),
+    Return(TypedId),
     Interface(Vec<(Id, Type)>),
 }
 
@@ -160,8 +206,8 @@ struct InspirvModuleCtxt<'v, 'tcx: 'v> {
     builder: ModuleBuilder,
 
     arg_ids: IndexVec<Arg, Option<FuncArg>>,
-    var_ids: IndexVec<Var, LocalVar>,
-    temp_ids: IndexVec<Temp, LocalVar>,
+    var_ids: IndexVec<Var, TypedId>,
+    temp_ids: IndexVec<Temp, TypedId>,
     return_ids: Option<FuncReturn>,
 }
 
@@ -524,7 +570,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             Arg(id) => {
                 if let Some(arg) = self.arg_ids[id].clone() {
                     match arg {
-                        FuncArg::Argument(arg) => Some(SpirvLvalue::Variable(arg.id, arg.ty, StorageClassFunction)),
+                        FuncArg::Argument((id, ty)) => Some(SpirvLvalue::Variable(id, ty, StorageClassFunction)),
                         FuncArg::Interface(interfaces) => Some(SpirvLvalue::SignatureStruct(interfaces, StorageClassInput)),
                         FuncArg::ConstBuffer(_consts) => None, // TODO: High
                     }
@@ -533,16 +579,16 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 }
             }
             Var(id) => {
-                let var = self.var_ids[id].clone();
-                Some(SpirvLvalue::Variable(var.id, var.ty, StorageClassFunction))
+                let (var_id, var_ty) = self.var_ids[id].clone();
+                Some(SpirvLvalue::Variable(var_id, var_ty, StorageClassFunction))
             }
             Temp(id) => {
-                let var = self.temp_ids[id].clone();
-                Some(SpirvLvalue::Variable(var.id, var.ty, StorageClassFunction))
+                let (var_id, var_ty) = self.temp_ids[id].clone();
+                Some(SpirvLvalue::Variable(var_id, var_ty, StorageClassFunction))
             }
             ReturnPointer => {
                 match self.return_ids {
-                    Some(FuncReturn::Return(ref var)) => Some(SpirvLvalue::Return(var.id, var.ty.clone())),
+                    Some(FuncReturn::Return((var_id, ref var_ty))) => Some(SpirvLvalue::Return((var_id, var_ty.clone()))),
                     Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::SignatureStruct(interfaces.clone(), StorageClassOutput)),
                     None => Some(SpirvLvalue::Ignore),
                 }
@@ -556,17 +602,17 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     match (&proj.elem, &base) {
                         (&ProjectionElem::Field(field, _), &SpirvLvalue::SignatureStruct(ref interfaces, storage_class)) => {
                             let var = interfaces[field.index()].clone();
-                            Some(SpirvLvalue::Variable(var.0, var.1, storage_class))
+                            Some(SpirvLvalue::Variable(var.0, SpirvType::NoRef(var.1), storage_class))
                         }
                         (&ProjectionElem::Field(field, ty), &SpirvLvalue::Variable(id, _, storage_class)) => {
                             let field_id = self.builder.define_constant(module::Constant::Scalar(ConstValue::U32(field.index() as u32)));
-                            Some(SpirvLvalue::AccessChain(id, storage_class, vec![field_id], self.rust_ty_to_inspirv(ty)))
+                            Some(SpirvLvalue::AccessChain(id, storage_class, vec![field_id], self.rust_ty_to_spirv(ty)))
                         }
                         (&ProjectionElem::Field(field, ty), &SpirvLvalue::AccessChain(id, storage_class, ref chain, _)) => {
                             let field_id = self.builder.define_constant(module::Constant::Scalar(ConstValue::U32(field.index() as u32)));
                             let mut chain = chain.clone();
                             chain.push(field_id);
-                            Some(SpirvLvalue::AccessChain(id, storage_class, chain, self.rust_ty_to_inspirv(ty)))
+                            Some(SpirvLvalue::AccessChain(id, storage_class, chain, self.rust_ty_to_spirv(ty)))
                         }
                         _ => {
                             println!("inspirv: unsupported lvalue {:?}", (proj, &base));
@@ -588,7 +634,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 let ty_id = self.builder.define_type(&Type::Pointer(Box::new(ty.clone()), storage_class));
                 let op_access_chain = OpAccessChain(ty_id, chain_id, root_id, chain.clone());
                 block.emit_instruction(op_access_chain);
-                SpirvLvalue::Variable(chain_id, ty.clone(), storage_class)
+                SpirvLvalue::Variable(chain_id, SpirvType::NoRef(ty.clone()), storage_class)
             },
             _ => lvalue
         }
@@ -655,7 +701,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     if interface {
                         if let ty::TyAdt(adt, subs) = arg.ty.sty {
                             let interfaces = adt.struct_variant().fields.iter().map(|field| {
-                                let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
+                                let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs));
                                 let node_id = self.get_node_id(ty_id);
                                 let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
                                 let id = self.builder.define_variable(name.as_str(), ty.clone(),
@@ -714,26 +760,28 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                         bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
                     } else {
                         let id = self.builder.alloc_id();
+                        let ty = self.rust_ty_to_spirv_ref(arg.ty);
                         let arg = Argument {
                             id: id,
-                            ty: self.rust_ty_to_inspirv(arg.ty),
+                            ty: ty.clone().into(),
                         };
-                        params.push(arg.clone());
+                        params.push(arg);
                         self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
-                        self.arg_ids.push(Some(FuncArg::Argument(arg)));
+                        self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
                     }
                 } else if entry_point.is_some() {
                     bug!("Argument type not defined in local crate({:?})", arg.ty)
                 } else {
                     //
                     let id = self.builder.alloc_id();
+                    let ty = self.rust_ty_to_spirv_ref(arg.ty);
                     let arg = Argument {
                         id: id,
-                        ty: self.rust_ty_to_inspirv(arg.ty),
+                        ty: ty.clone().into(),
                     };
-                    params.push(arg.clone());
+                    params.push(arg);
                     self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
-                    self.arg_ids.push(Some(FuncArg::Argument(arg)));
+                    self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
                 }
             }
 
@@ -755,7 +803,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
                             if interface {
                                 let interfaces = adt.struct_variant().fields.iter().map(|field| {
-                                    let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
+                                    let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs));
                                     let node_id = self.get_node_id(ty_id);
                                     let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
                                     let id = self.builder.define_variable(name.as_str(), ty.clone(),
@@ -830,20 +878,20 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
                 func.params = params;
 
-                let return_ty = self.rust_ty_to_inspirv(mir.return_ty);
-                self.return_ids = if let Type::Void = return_ty {
+                let return_ty = self.rust_ty_to_spirv_ref(mir.return_ty);
+                self.return_ids = if let &Type::Void = return_ty.ty() {
                     None
                 } else {
                     let id = self.builder.alloc_id();
                     let local_var = LocalVar {
                         id: id,
-                        ty: return_ty.clone(),
+                        ty: return_ty.clone().into(),
                     };
-                    func.variables.push(local_var.clone());
-                    Some(FuncReturn::Return(local_var))
+                    func.variables.push(local_var);
+                    Some(FuncReturn::Return((id, return_ty.clone())))
                 };
 
-                func.ret_ty = return_ty;
+                func.ret_ty = return_ty.into();
                 func
             }
         };
@@ -852,30 +900,32 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
         // local variables and temporaries
         self.var_ids = {
-            let mut ids: IndexVec<Var, LocalVar> = IndexVec::new();
+            let mut ids: IndexVec<Var, TypedId> = IndexVec::new();
             for var in mir.var_decls.iter() {
                 let id = self.builder.alloc_id();
+                let ty = self.rust_ty_to_spirv_ref(var.ty);
                 let local_var = LocalVar {
                     id: id,
-                    ty: self.rust_ty_to_inspirv(var.ty),
+                    ty: ty.clone().into(),
                 };
-                fn_module.variables.push(local_var.clone());
-                ids.push(local_var);
+                fn_module.variables.push(local_var);
+                ids.push((id, ty));
                 self.builder.name_id(id, &*var.name.as_str()); // TODO: hide this behind a function module interface
             }
             ids
         };
 
         self.temp_ids = {
-            let mut ids: IndexVec<Temp, LocalVar> = IndexVec::new();
+            let mut ids: IndexVec<Temp, TypedId> = IndexVec::new();
             for var in mir.temp_decls.iter() {
                 let id = self.builder.alloc_id();
+                let ty = self.rust_ty_to_spirv_ref(var.ty);
                 let local_var = LocalVar {
                     id: id,
-                    ty: self.rust_ty_to_inspirv(var.ty),
+                    ty: ty.clone().into(),
                 };
                 fn_module.variables.push(local_var.clone());
-                ids.push(local_var);
+                ids.push((id, ty));
             }
             ids
         };
@@ -922,22 +972,31 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     }
 
     // TODO: low: We could cache some aggregated types for faster compilation
-    fn rust_ty_to_inspirv(&self, t: Ty<'tcx>) -> Type {
+    fn rust_ty_to_spirv(&self, t: Ty<'tcx>) -> Type {
+        use self::SpirvType::*;
+        match self.rust_ty_to_spirv_ref(t) {
+            NoRef(ty) => ty,
+            Ref(..) => bug!("Unallowed reference type ({:?})", t.sty),
+        }
+    }
+
+    fn rust_ty_to_spirv_ref(&self, t: Ty<'tcx>) -> SpirvType {
+        use self::SpirvType::*;
         match t.sty {
-            ty::TyBool => Type::Bool,
-            ty::TyInt(IntTy::I8)      => Type::Int(8, true),
-            ty::TyInt(IntTy::I16)     => Type::Int(16, true),
+            ty::TyBool => NoRef(Type::Bool),
+            ty::TyInt(IntTy::I8)      => NoRef(Type::Int(8, true)),
+            ty::TyInt(IntTy::I16)     => NoRef(Type::Int(16, true)),
             ty::TyInt(IntTy::Is) |
-            ty::TyInt(IntTy::I32)     => Type::Int(32, true), // isize
-            ty::TyInt(IntTy::I64)     => Type::Int(64, true),
+            ty::TyInt(IntTy::I32)     => NoRef(Type::Int(32, true)), // isize
+            ty::TyInt(IntTy::I64)     => NoRef(Type::Int(64, true)),
             ty::TyChar |
-            ty::TyUint(UintTy::U8)    => Type::Int(8, false),
-            ty::TyUint(UintTy::U16)   => Type::Int(16, false),
+            ty::TyUint(UintTy::U8)    => NoRef(Type::Int(8, false)),
+            ty::TyUint(UintTy::U16)   => NoRef(Type::Int(16, false)),
             ty::TyUint(UintTy::Us) |
-            ty::TyUint(UintTy::U32)   => Type::Int(32, false), // usize
-            ty::TyUint(UintTy::U64)   => Type::Int(64, false),
-            ty::TyFloat(FloatTy::F32) => Type::Float(32),
-            ty::TyFloat(FloatTy::F64) => Type::Float(64),
+            ty::TyUint(UintTy::U32)   => NoRef(Type::Int(32, false)), // usize
+            ty::TyUint(UintTy::U64)   => NoRef(Type::Int(64, false)),
+            ty::TyFloat(FloatTy::F32) => NoRef(Type::Float(32)),
+            ty::TyFloat(FloatTy::F64) => NoRef(Type::Float(64)),
             ty::TyArray(_ty, _len)    => unimplemented!(),
             
             // TyNever:
@@ -945,8 +1004,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             //  Often as unused temporary variables, which are never really used
             // TyTuple(&[]):
             //  Rust seems to emit () instead of void for function return types
-            ty::TyNever | ty::TyTuple(&[]) => Type::Void,
-            ty::TyTuple(tys)               => Type::Struct(tys.iter().map(|ty| self.rust_ty_to_inspirv(ty)).collect()),
+            ty::TyNever | ty::TyTuple(&[]) => NoRef(Type::Void),
+            ty::TyTuple(tys)               => NoRef(Type::Struct(tys.iter().map(|ty| self.rust_ty_to_spirv(ty)).collect())),
 
             //
             ty::TyAdt(adt, subs) if adt.is_struct() => {
@@ -957,17 +1016,15 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 });
                 if let Some(internal_type) = internal_type {
                     match *internal_type {
-                        InspirvAttribute::Vector { ref base, components } => Type::Vector(base.clone(), components as u32),
+                        InspirvAttribute::Vector { ref base, components } => NoRef(Type::Vector(base.clone(), components as u32)),
                         _ => bug!("Unhandled internal type ({:?})", *internal_type),
                     }
                 } else {
                     // an actual struct!
                     // TODO: handle names
-                    Type::Struct(adt.struct_variant().fields.iter().map(|field| self.rust_ty_to_inspirv(field.ty(*self.tcx, subs))).collect())
+                    NoRef(Type::Struct(adt.struct_variant().fields.iter().map(|field| self.rust_ty_to_spirv(field.ty(*self.tcx, subs))).collect()))
                 }    
             },
-
-            ty::TyRawPtr(..) => { println!("{:?}", t.sty); unimplemented!() },
 
             _ => { println!("{:?}", t.sty); unimplemented!() },
         }
@@ -983,7 +1040,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     let lvalue = self.ctxt.transform_lvalue(self.block, lvalue);
                 
                     match lvalue {
-                        SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return(lvalue_id, lvalue_ty) => {
+                        SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return((lvalue_id, lvalue_ty)) => {
                             use rustc::mir::repr::Rvalue::*;
                             match *rvalue {
                                 Use(ref operand) => {
@@ -1004,7 +1061,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                                 id
                                             }).collect::<Vec<_>>();
                                             let composite_id = self.ctxt.builder.alloc_id();
-                                            self.block.emit_instruction(OpCompositeConstruct(self.ctxt.builder.define_type(&lvalue_ty), composite_id, ids));
+                                            self.block.emit_instruction(OpCompositeConstruct(self.ctxt.builder.define_type(&lvalue_ty.into()), composite_id, ids));
                                             self.block.emit_instruction(OpStore(lvalue_id, composite_id, None));
                                         }
                                         _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span,
@@ -1028,7 +1085,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported cast kind!")
                                     } else {
                                         let op = self.trans_operand(operand);
-                                        let cast_ty = self.ctxt.rust_ty_to_inspirv(ty);
+                                        let cast_ty = self.ctxt.rust_ty_to_spirv(ty);
                                         match op {
                                             SpirvOperand::Constant(_op_id, _op_ty) => {
                                                 // Why!? ):
@@ -1179,7 +1236,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                         // Store return value into lvalue destination
                         match lvalue {
-                            SpirvLvalue::Variable(lvalue_id, _, _) | SpirvLvalue::Return(lvalue_id, _) => {
+                            SpirvLvalue::Variable(lvalue_id, _, _) | SpirvLvalue::Return((lvalue_id, _)) => {
                                 self.block.emit_instruction(OpStore(lvalue_id, id, None));
                             },
 
@@ -1255,7 +1312,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                         };
 
                         let constant_id = self.ctxt.builder.define_constant(constant);
-                        SpirvOperand::Constant(constant_id, ty)
+                        SpirvOperand::Constant(constant_id, SpirvType::NoRef(ty))
                     }
                     Literal::Promoted { .. /* ref index */ } => SpirvOperand::None,
                 }
@@ -1264,6 +1321,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
     }
 
     fn emit_binop(&mut self, op: BinOp, (result_id, result_ty): TypedId, (left_id, left_ty): TypedId, (right_id, right_ty): TypedId) {
+        use self::SpirvType::*;
         let left_ptr_id = self.ctxt.builder.alloc_id();
         let right_ptr_id = self.ctxt.builder.alloc_id();
 
@@ -1276,15 +1334,15 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         // emit addition instruction
         let add_result = self.ctxt.builder.alloc_id();
         let op_binop: instruction::Instruction = match (op, &left_ty, &right_ty) {
-            (BinOp::Add, &Type::Int(..), &Type::Int(..)) => {
+            (BinOp::Add, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
                 OpIAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
             }
 
-            (BinOp::Add, &Type::Float(..), &Type::Float(..)) => {
+            (BinOp::Add, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
                 OpFAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
             }
 
-            (BinOp::Div, &Type::Float(..), &Type::Float(..)) => {
+            (BinOp::Div, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
                 OpFDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
             }
 
