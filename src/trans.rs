@@ -642,11 +642,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 if name.is_empty() {
                     self.arg_ids.push(None);
                 } else if let Some(ty_id) = arg.ty.ty_to_def_id() {
-                    // TODO: low-mid: unsafe! We would like to find the attributes of the current type
-                    // Dont know how to correctly retrieve this information for non-local crates!
-                    let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
-                    let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
-
+                    let attrs = self.get_node_attributes(ty_id);
                     let interface = attrs.iter().any(|attr| match *attr {
                             InspirvAttribute::Interface => true,
                             _ => false,
@@ -660,7 +656,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                         if let ty::TyAdt(adt, subs) = arg.ty.sty {
                             let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                 let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
-                                let name = format!("{}::{}", self.tcx.map.name(node_id), field.name.as_str());
+                                let node_id = self.get_node_id(ty_id);
+                                let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
                                 let id = self.builder.define_variable(name.as_str(), ty.clone(),
                                                              StorageClass::StorageClassInput);
 
@@ -750,9 +747,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 match mir.return_ty.sty {
                     ty::TyAdt(adt, subs) => {
                         if let Some(ty_id) = mir.return_ty.ty_to_def_id() {
-                            let node_id = self.tcx.map.as_local_node_id(ty_id).unwrap();
-                            let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
-
+                            let attrs = self.get_node_attributes(ty_id);
                             let interface = attrs.iter().any(|attr| match *attr {
                                 InspirvAttribute::Interface => true,
                                 _ => false,
@@ -761,7 +756,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                             if interface {
                                 let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                     let ty = self.rust_ty_to_inspirv(field.ty(*self.tcx, subs));
-                                    let name = format!("{}::{}", self.tcx.map.name(node_id), field.name.as_str());
+                                    let node_id = self.get_node_id(ty_id);
+                                    let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
                                     let id = self.builder.define_variable(name.as_str(), ty.clone(),
                                                                  StorageClass::StorageClassOutput);
 
@@ -914,6 +910,17 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         self.temp_ids = IndexVec::new();
     }
 
+    fn get_node_id(&self, id: DefId) -> NodeId {
+        // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
+        // Dont know how to correctly retrieve this information for non-local crates, probably requires custom crate format!
+        self.tcx.map.as_local_node_id(id).expect("Id not defined in local crate!")
+    }
+
+    fn get_node_attributes(&self, id: DefId) -> Vec<InspirvAttribute> {
+        let node_id = self.get_node_id(id);
+        self.parse_inspirv_attributes(self.tcx.map.attrs(node_id))
+    }
+
     // TODO: low: We could cache some aggregated types for faster compilation
     fn rust_ty_to_inspirv(&self, t: Ty<'tcx>) -> Type {
         match t.sty {
@@ -943,10 +950,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
             //
             ty::TyAdt(adt, subs) if adt.is_struct() => {
-                // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
-                // Dont know how to correctly retrieve this information for non-local crates!
-                let node_id = self.tcx.map.as_local_node_id(adt.did).unwrap();
-                let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(node_id));
+                let attrs = self.get_node_attributes(adt.did);
                 let internal_type = attrs.iter().find(|attr| match **attr {
                     InspirvAttribute::Vector { .. } => true,
                     _ => false,
@@ -1154,8 +1158,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 let func_op = self.trans_operand(func);
                 match func_op {
                     SpirvOperand::FnCall(def_id) => {
-                        let func_id = self.ctxt.tcx.map.as_local_node_id(def_id).expect("Function is not in local crate!");
-                        let attrs = self.ctxt.parse_inspirv_attributes(self.ctxt.tcx.map.attrs(func_id));
+                        let attrs = self.ctxt.get_node_attributes(def_id);
 
                         let intrinsic = attrs.iter().find(|attr| match **attr {
                             InspirvAttribute::Intrinsic (..) => true,
