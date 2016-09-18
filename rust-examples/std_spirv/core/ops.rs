@@ -7,13 +7,6 @@ pub trait Add<RHS = Self> {
     fn add(self, rhs: RHS) -> Self::Output;
 }
 
-impl Add for u8 {
-    type Output = u8;
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn add(self, rhs: u8) -> Self::Output { self + rhs }
-}
-
 impl Add for u16 {
     type Output = u16;
     #[inline]
@@ -40,13 +33,6 @@ impl Add for usize {
     #[inline]
     #[inspirv(compiler_builtin)]
     fn add(self, rhs: usize) -> Self::Output { self + rhs }
-}
-
-impl Add for i8 {
-    type Output = i8;
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn add(self, rhs: i8) -> Self::Output { self + rhs }
 }
 
 impl Add for i16 {
@@ -149,12 +135,6 @@ pub trait AddAssign<Rhs=Self> {
     fn add_assign(&mut self, Rhs);
 }
 
-impl AddAssign for u8 {
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn add_assign(&mut self, other: u8) { *self += other }
-}
-
 impl AddAssign for u16 {
     #[inline]
     #[inspirv(compiler_builtin)]
@@ -177,12 +157,6 @@ impl AddAssign for usize {
     #[inline]
     #[inspirv(compiler_builtin)]
     fn add_assign(&mut self, other: usize) { *self += other }
-}
-
-impl AddAssign for i8 {
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn add_assign(&mut self, other: i8) { *self += other }
 }
 
 impl AddAssign for i16 {

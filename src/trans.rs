@@ -113,10 +113,12 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     v.trans();
 }
 
+type TypedId = (Id, Type);
+
 #[derive(Clone, Debug)]
 enum SpirvOperand {
     Consume(SpirvLvalue),
-    Constant(Id),
+    Constant(Id, Type),
     FnCall(DefId),
     None, // TODO: temp
 }
@@ -983,7 +985,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                 Use(ref operand) => {
                                     let op = self.trans_operand(operand);
                                     match op {
-                                        SpirvOperand::Constant(op_id) => {
+                                        SpirvOperand::Constant(op_id, _) => {
                                             self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
                                         }
                                         SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
@@ -1024,7 +1026,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         let op = self.trans_operand(operand);
                                         let cast_ty = self.ctxt.rust_ty_to_inspirv(ty);
                                         match op {
-                                            SpirvOperand::Constant(_op_id) => {
+                                            SpirvOperand::Constant(_op_id, _op_ty) => {
                                                 // Why!? ):
                                                 self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unsupported const cast rvalue (soon)!")
                                                 // self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
@@ -1054,12 +1056,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                     match (left, right) {
                                         (SpirvOperand::Consume(SpirvLvalue::Variable(left_id, left_ty, _)),
                                          SpirvOperand::Consume(SpirvLvalue::Variable(right_id, right_ty, _))) => {
-                                            self.emit_binop(
-                                                *op,
-                                                lvalue_id, lvalue_ty,
-                                                left_id, left_ty,
-                                                right_id, right_ty,
-                                            );
+                                            self.emit_binop(*op, (lvalue_id, lvalue_ty), (left_id, left_ty), (right_id, right_ty));
                                         }
 
                                         // TODO:
@@ -1097,7 +1094,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                     for (operand, interface) in operands.iter().zip(interfaces.iter()) {
                                         let op = self.trans_operand(operand);
                                         match op {
-                                            SpirvOperand::Constant(op_id) => {
+                                            SpirvOperand::Constant(op_id, _) => {
                                                 self.block.emit_instruction(OpStore(interface.0, op_id, None));
                                             }
                                             SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
@@ -1226,21 +1223,21 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                         SpirvOperand::FnCall(def_id)
                     }
                     Literal::Value { ref value } => {
-                        let constant = match *value {
-                            Float(ConstFloat::F32(v)) => module::Constant::Float(ConstValueFloat::F32(v)),
-                            Float(ConstFloat::F64(v)) => module::Constant::Float(ConstValueFloat::F64(v)),
+                        let (constant, ty) = match *value {
+                            Float(ConstFloat::F32(v)) => (module::Constant::Float(ConstValueFloat::F32(v)), Type::Float(32)),
+                            Float(ConstFloat::F64(v)) => (module::Constant::Float(ConstValueFloat::F64(v)), Type::Float(64)),
                             Float(ConstFloat::FInfer { .. }) => bug!("MIR must not use `{:?}`", c.literal),
-                            Integral(ConstInt::I8(v)) => module::Constant::Scalar(ConstValue::I8(v)),
-                            Integral(ConstInt::I16(v)) => module::Constant::Scalar(ConstValue::I16(v)),
-                            Integral(ConstInt::I32(v)) => module::Constant::Scalar(ConstValue::I32(v)),
-                            Integral(ConstInt::I64(v)) => module::Constant::Scalar(ConstValue::I64(v)),
+                            Integral(ConstInt::I8(..)) => bug!("Inspirv: `i8` are not supported for shaders `{:?}`", c.literal),
+                            Integral(ConstInt::I16(v)) => (module::Constant::Scalar(ConstValue::I16(v)), Type::Int(16, true)),
+                            Integral(ConstInt::I32(v)) => (module::Constant::Scalar(ConstValue::I32(v)), Type::Int(32, true)),
+                            Integral(ConstInt::I64(v)) => (module::Constant::Scalar(ConstValue::I64(v)), Type::Int(64, true)),
                             Integral(ConstInt::Isize(_v)) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
-                            Integral(ConstInt::U8(v)) => module::Constant::Scalar(ConstValue::U8(v)),
-                            Integral(ConstInt::U16(v)) => module::Constant::Scalar(ConstValue::U16(v)),
-                            Integral(ConstInt::U32(v)) => module::Constant::Scalar(ConstValue::U32(v)),
-                            Integral(ConstInt::U64(v)) => module::Constant::Scalar(ConstValue::U64(v)),
+                            Integral(ConstInt::U8(..)) => bug!("Inspirv: `u8` are not supported for shaders `{:?}`", c.literal),
+                            Integral(ConstInt::U16(v)) => (module::Constant::Scalar(ConstValue::U16(v)), Type::Int(16, false)),
+                            Integral(ConstInt::U32(v)) => (module::Constant::Scalar(ConstValue::U32(v)), Type::Int(32, false)),
+                            Integral(ConstInt::U64(v)) => (module::Constant::Scalar(ConstValue::U64(v)), Type::Int(64, false)),
                             Integral(ConstInt::Usize(_v)) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
-                            Bool(val) => module::Constant::Scalar(ConstValue::Bool(val)),
+                            Bool(val) => (module::Constant::Scalar(ConstValue::Bool(val)), Type::Bool),
                             Char(_val) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
                             Integral(ConstInt::Infer(_))
                             | Integral(ConstInt::InferSigned(_)) => bug!("MIR must not use `{:?}`", c.literal),
@@ -1255,7 +1252,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                         };
 
                         let constant_id = self.ctxt.builder.define_constant(constant);
-                        SpirvOperand::Constant(constant_id)
+                        SpirvOperand::Constant(constant_id, ty)
                     }
                     Literal::Promoted { .. /* ref index */ } => SpirvOperand::None,
                 }
@@ -1263,7 +1260,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    fn emit_binop(&mut self, op: BinOp, result_id: Id, result_ty: Type, left_id: Id, left_ty: Type, right_id: Id, right_ty: Type) {
+    fn emit_binop(&mut self, op: BinOp, (result_id, result_ty): TypedId, (left_id, left_ty): TypedId, (right_id, right_ty): TypedId) {
         let left_ptr_id = self.ctxt.builder.alloc_id();
         let right_ptr_id = self.ctxt.builder.alloc_id();
 
@@ -1302,7 +1299,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<Vec<_>>();
         let component_ids = args_ops.iter().filter_map(
                                 |arg| match *arg {
-                                    SpirvOperand::Constant(c) => Some(c),
+                                    SpirvOperand::Constant(c, _) => Some(c),
                                     SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
                                         let op_id = self.ctxt.builder.alloc_id();
                                         let op_load = OpLoad(self.ctxt.builder.define_type(op_ty), op_id, op_ptr_id, None);
