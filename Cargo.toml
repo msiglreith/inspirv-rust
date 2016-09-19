@@ -1,0 +1,23 @@
+[package]
+authors = [
+    "Scott Olson <scott@solson.me>",
+    "Brian Anderson <banderson@mozilla.com>",
+    "Alon Zakai <azakai@mozilla.com>",
+    "msiglreith <msiglreith@users.noreply.github.com>"
+]
+description = "An experimental compiler from Rust to SPIR-V."
+license = "MIT/Apache-2.0"
+name = "inspirv-rust"
+version = "0.1.0"
+
+[[bin]]
+doc = false
+name = "inspirv-rust"
+
+[dependencies]
+error-chain = "0.1.9"
+log = "0.3.6"
+env_logger = "0.3.3"
+libc = "0.2"
+inspirv = { path = "../inspirv", version = "0.1.0" }
+inspirv-builder = { path = "../inspirv-builder", version = "0.1.0" }
