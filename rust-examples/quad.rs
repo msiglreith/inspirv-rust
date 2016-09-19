@@ -1,5 +1,5 @@
 #![crate_type = "lib"]
-#![feature(fundamental, no_core, lang_items, custom_attribute, attr_literals)]
+#![feature(fundamental, no_core, lang_items, custom_attribute, attr_literals, optin_builtin_traits)]
 #![allow(dead_code)]
 #![allow(unused_attributes)]
 #![no_core]

@@ -117,12 +117,16 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 #[derive(Clone, Debug)]
 enum SpirvType {
     NoRef(Type),
-    Ref(Type, Id),
+    Ref {
+        ty: Type,
+        mutable: bool,
+        referent: Option<Id>
+    },
 }
 
 impl SpirvType {
     fn is_ref(&self) -> bool {
-        if let SpirvType::Ref(..) = *self {
+        if let SpirvType::Ref {..} = *self {
             true
         } else {
             false
@@ -133,7 +137,7 @@ impl SpirvType {
         use self::SpirvType::*;
         match *self {
             NoRef(ref ty) => ty,
-            Ref(ref ty, _) => ty,
+            Ref{ ref ty, .. } => ty,
         }
     }
 }
@@ -143,7 +147,7 @@ impl Into<Type> for SpirvType {
         use self::SpirvType::*;
         match self {
             NoRef(ty) => ty,
-            Ref(ty, _) => ty,
+            Ref{ ty, .. } => ty,
         }
     }
 }
@@ -154,7 +158,7 @@ impl Deref for SpirvType {
         use self::SpirvType::*;
         match *self {
             NoRef(ref ty) => ty,
-            Ref(ref ty, _) => ty,
+            Ref{ ref ty, .. } => ty,
         }
     }
 }
@@ -566,6 +570,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn resolve_lvalue(&mut self, lvalue: &Lvalue<'tcx>) -> Option<SpirvLvalue> {
         use rustc::mir::repr::Lvalue::*;
         use inspirv::core::enumeration::StorageClass::*;
+        use self::SpirvType::*;
         match *lvalue {
             Arg(id) => {
                 if let Some(arg) = self.arg_ids[id].clone() {
@@ -614,6 +619,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                             chain.push(field_id);
                             Some(SpirvLvalue::AccessChain(id, storage_class, chain, self.rust_ty_to_spirv(ty)))
                         }
+                        (&ProjectionElem::Deref, &SpirvLvalue::Variable(id, Ref {ref ty, referent: Some(refer), ..}, storage_class)) => {
+                            Some(SpirvLvalue::Variable(refer, SpirvType::NoRef(ty.clone()), storage_class))
+                        }
                         _ => {
                             println!("inspirv: unsupported lvalue {:?}", (proj, &base));
                             None
@@ -624,6 +632,43 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     None
                 }
             },
+        }
+    }
+
+    fn resolve_ref_lvalue<'a>(&'a mut self, lvalue: &'a Lvalue<'tcx>) -> Option<&'a mut SpirvType> {
+        use rustc::mir::repr::Lvalue::*;
+        use inspirv::core::enumeration::StorageClass::*;
+        use self::SpirvType::*;
+        match *lvalue {
+            Arg(id) => {
+                if let Some(ref mut arg) = self.arg_ids[id] {
+                    match *arg {
+                        FuncArg::Argument((_, ref mut ty)) => Some(ty),
+                        FuncArg::Interface(_) | FuncArg::ConstBuffer(_) => None,
+                    }
+                } else {
+                    unreachable!()
+                }
+            }
+            Var(id) => {
+                let (_, ref mut var_ty) = self.var_ids[id];
+                Some(var_ty)
+            }
+            Temp(id) => {
+                let (_, ref mut var_ty) = self.temp_ids[id];
+                Some(var_ty)
+            }
+            ReturnPointer => {
+                match self.return_ids {
+                    Some(FuncReturn::Return((_, ref mut var_ty))) => Some(var_ty),
+                    _ => None,
+                }
+            }
+            Static(_def_id) => {
+                println!("inspirv: unsupported lvalue {:?}", lvalue);
+                None
+            }
+            Projection(_) => None,
         }
     }
 
@@ -976,7 +1021,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         use self::SpirvType::*;
         match self.rust_ty_to_spirv_ref(t) {
             NoRef(ty) => ty,
-            Ref(..) => bug!("Unallowed reference type ({:?})", t.sty),
+            Ref{..} => bug!("Unallowed reference type ({:?})", t.sty),
         }
     }
 
@@ -1026,6 +1071,14 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 }    
             },
 
+            ty::TyRef(_, ty_mut) => {
+                Ref {
+                    ty: self.rust_ty_to_spirv(ty_mut.ty),
+                    mutable: ty_mut.mutbl == hir::Mutability::MutMutable,
+                    referent: None,
+                }
+            }
+
             _ => { println!("{:?}", t.sty); unimplemented!() },
         }
     }
@@ -1034,9 +1087,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
     fn trans_stmnt(&mut self, stmt: &Statement<'tcx>) {
         match stmt.kind {
-            StatementKind::Assign(ref lvalue, ref rvalue) => {
-                println!("{:?}", (lvalue, rvalue));
-                if let Some(lvalue) = self.ctxt.resolve_lvalue(lvalue) {
+            StatementKind::Assign(ref assign_lvalue, ref rvalue) => {
+                println!("{:?}", (assign_lvalue, rvalue));
+                if let Some(lvalue) = self.ctxt.resolve_lvalue(assign_lvalue) {
                     let lvalue = self.ctxt.transform_lvalue(self.block, lvalue);
                 
                     match lvalue {
@@ -1072,9 +1125,20 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                 /// [x; 32]
                                 Repeat(ref _operand, ref _times) => {}
 
-                                Ref(_, _, _) => {
-                                    self.ctxt.tcx.sess.span_err(stmt.source_info.span,
+                                Ref(_, _, ref referent) => {
+                                    let referent = self.ctxt.resolve_lvalue(referent).expect("inspirv: Unable to resolve referent lvalue");
+                                    let referent = self.ctxt.transform_lvalue(self.block, referent);
+                                    if let SpirvLvalue::Variable(referent_id, _, _) = referent {
+                                        if let Some(&mut SpirvType::Ref{ref mut referent, ..}) = self.ctxt.resolve_ref_lvalue(assign_lvalue) {
+                                            *referent = Some(referent_id);
+                                        } else {
+                                            self.ctxt.tcx.sess.span_err(stmt.source_info.span,
+                                                               "inspirv: Unsupported rvalue reference!")
+                                        }
+                                    } else {
+                                        self.ctxt.tcx.sess.span_err(stmt.source_info.span,
                                                            "inspirv: Unsupported rvalue reference!")
+                                    }
                                 }
 
                                 /// length of a [X] or [X;n] value

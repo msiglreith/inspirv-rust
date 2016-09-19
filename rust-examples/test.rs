@@ -1,29 +1,14 @@
 #![crate_type = "lib"]
-#![feature(fundamental, no_core, lang_items, custom_attribute, attr_literals)]
+#![feature(fundamental, no_core, lang_items, custom_attribute, attr_literals, optin_builtin_traits)]
 #![allow(dead_code)]
+#![allow(unused_attributes)]
 #![no_core]
 
 mod std_spirv;
 use std_spirv::*;
 
-#[inspirv(interface)]
-struct VertexInput {
-    #[inspirv(location = 0)]
-    pos: Float4,
-}
-
-#[inspirv(interface)]
-struct VertexVarying {
-    #[inspirv(location = 0)]
-    #[inspirv(builtin = "Position")]
-    pos: Float4,
-}
-
-#[inspirv(entry_point = "vertex")]
-fn vertex()  {
-    let a = Float4;
-    let x = 0u32;
-    let k = x as f32;
-    let j = 0u32 as f32;
-
+fn foo() {
+    let mut x = 0;
+    let y = &mut x;
+    *y = 2;
 }

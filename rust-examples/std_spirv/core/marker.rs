@@ -1,12 +1,12 @@
 
-use core::clone::Clone;
+use super::clone::Clone;
 
 #[lang = "sized"]
 #[fundamental]
 pub trait Sized { }
 
 #[lang = "copy"]
-pub trait Copy : Clone { }
+pub trait Copy { }
 
 #[lang = "sync"]
 pub unsafe trait Sync {
