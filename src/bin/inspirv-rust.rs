@@ -2,11 +2,11 @@
 
 extern crate env_logger;
 extern crate getopts;
-extern crate inspirv_mir;
+extern crate inspirv_rust;
 extern crate rustc;
 extern crate rustc_driver;
 
-use inspirv_mir::trans;
+use inspirv_rust::trans;
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
 use rustc::mir::mir_map::MirMap;

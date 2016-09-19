@@ -21,3 +21,4 @@ env_logger = "0.3.3"
 libc = "0.2"
 inspirv = { path = "../inspirv", version = "0.1.0" }
 inspirv-builder = { path = "../inspirv-builder", version = "0.1.0" }
+clippy = "*"
