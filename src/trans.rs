@@ -62,6 +62,10 @@ enum InspirvAttribute {
         builtin: BuiltIn
     },
     Intrinsic(Intrinsic),
+    Descriptor {
+        set: u64,
+        binding: u64,
+    },
 }
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
@@ -188,7 +192,7 @@ enum SpirvLvalue {
     // Standard variables, can be temporary or named variables, etc.
     Variable(Id, SpirvType, StorageClass),
 
-    // struct objects passed to functions, e.g. interfaces, constant buffer, ..
+    // struct objects passed to functions, e.g. interfaces
     SignatureStruct(Vec<(Id, Type)>, StorageClass),
 
     // chain of field access e.g a.b.c.d
@@ -205,7 +209,7 @@ enum SpirvLvalue {
 enum FuncArg {
     Argument(IdAndType),
     Interface(Vec<(Id, Type)>),
-    ConstBuffer(Vec<(Id, Type)>),
+    ConstBuffer(IdAndType),
 }
 
 #[derive(Clone)]
@@ -418,6 +422,48 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                 }
                                             }
 
+                                            "descriptor" => {
+                                                let mut set = None;
+                                                let mut binding = None;
+                                                for item in items {
+                                                    match item.node {
+                                                        NestedMetaItemKind::MetaItem(ref item) => {
+                                                            match item.node {
+                                                                MetaItemKind::NameValue(ref name, ref value) => {
+                                                                    match &**name {
+                                                                        "set" => {
+                                                                            set = match value.node {
+                                                                                syntax::ast::LitKind::Int(b, _) => Some(b),
+                                                                                _ => panic!("attribute value needs to be interger"),
+                                                                            }
+                                                                        },
+                                                                        "binding" => {
+                                                                            binding = match value.node {
+                                                                                syntax::ast::LitKind::Int(b, _) => Some(b),
+                                                                                _ => panic!("attribute value needs to be interger"),
+                                                                            }
+                                                                        },
+
+                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
+                                                                    }
+                                                                }
+                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
+                                                            }
+                                                        }
+                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
+                                                    }
+                                                }
+
+                                                if set.is_none() || binding.is_none() {
+                                                    self.tcx.sess.span_err(item.span, "`inspirv` descriptor misses `set` or `binding` attributes");
+                                                } else {
+                                                    attrs.push(InspirvAttribute::Descriptor { 
+                                                        set: set.unwrap(),
+                                                        binding: binding.unwrap()
+                                                    });
+                                                }
+                                            }
+
                                             // intrinsics with additional data `instrinsic(name(..))` or `instrinsic(name)`
                                             "intrinsic" => {
                                                 match items[0].node {
@@ -588,7 +634,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     match arg {
                         FuncArg::Argument((id, ty)) => Some(SpirvLvalue::Variable(id, ty, StorageClassFunction)),
                         FuncArg::Interface(interfaces) => Some(SpirvLvalue::SignatureStruct(interfaces, StorageClassInput)),
-                        FuncArg::ConstBuffer(_consts) => None, // TODO: High
+                        FuncArg::ConstBuffer((id, ty)) => Some(SpirvLvalue::Variable(id, ty, StorageClassUniform)),
                     }
                 } else {
                     Some(SpirvLvalue::Ignore) // unnamed argument `_`

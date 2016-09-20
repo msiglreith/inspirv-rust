@@ -39,12 +39,13 @@ struct QuadOut {
 }
 
 #[inspirv(const_buffer)]
+#[inspirv(descriptor(set = 0, binding = 0))]
 struct Locals {
 
 }
 
 #[inspirv(entry_point = "vertex")]
-fn vertex(input: QuadVertex) -> QuadVarying {
+fn vertex(input: QuadVertex, locals: Locals) -> QuadVarying {
     QuadVarying {
         pos: input.pos,
         color: input.color,
