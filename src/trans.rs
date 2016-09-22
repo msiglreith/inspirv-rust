@@ -1321,6 +1321,9 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             // Translation only
             StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
             StatementKind::SetDiscriminant { .. } => println!("{:?}", stmt.kind),
+
+            // Empty statements, nothing to do
+            StatementKind::Nop => {}
         }
     }
 
