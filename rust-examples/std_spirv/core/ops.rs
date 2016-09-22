@@ -215,22 +215,3 @@ impl DivAssign for isize {
     #[inspirv(compiler_builtin)]
     fn div_assign(&mut self, other: isize) { *self /= other }
 }
-
-#[lang = "eq"]
-pub trait PartialEq<Rhs: ?Sized = Self> {
-    #[inline]
-    fn eq(&self, other: &Rhs) -> bool;
-
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn ne(&self, other: &Rhs) -> bool { !self.eq(other) }
-}
-
-impl PartialEq for isize {
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn eq(&self, other: &isize) -> bool { (*self) == (*other) }
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn ne(&self, other: &isize) -> bool { (*self) != (*other) }
-}

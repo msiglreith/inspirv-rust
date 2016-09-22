@@ -5,7 +5,7 @@ use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::{ConstInt, ConstFloat};
-use rustc::ty::{self, TyCtxt, Ty};
+use rustc::ty::{self, TyCtxt, Ty, VariantKind};
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::util::common::time;
@@ -86,6 +86,8 @@ pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         passes.push_pass(box borrowck::ElaborateDrops);
         passes.push_pass(box mir::transform::no_landing_pads::NoLandingPads);
         passes.push_pass(box mir::transform::simplify_cfg::SimplifyCfg::new("elaborate-drops"));
+
+        passes.push_pass(box mir::transform::deaggregator::Deaggregator);
 
         passes.push_pass(box mir::transform::add_call_guards::AddCallGuards);
         passes.push_pass(box mir::transform::dump_mir::Marker("PreTrans"));
@@ -1132,7 +1134,35 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     // TODO: handle names
                     NoRef(Type::Struct(adt.struct_variant().fields.iter().map(|field| self.rust_ty_to_spirv(field.ty(*self.tcx, subs))).collect()))
                 }    
-            },
+            }
+            ty::TyAdt(adt, subs) if adt.is_enum() => {
+                use rustc_const_math::ConstInt::*;
+                use rustc_const_math::ConstIsize::*;
+
+                if adt.variants.is_empty() {
+                    // TODO: probably won't happen
+                    return NoRef(Type::Void)
+                }
+
+                let unit_only = adt.variants.iter().all(|variant| variant.kind == VariantKind::Unit);
+                if !unit_only {
+                    bug!("inspirv: Enums can only contain unit type structs ({:?})", t.sty);
+                }
+
+                let discr = adt.variants[0].disr_val;
+                let (bit_width, signed) = match discr {
+                    I16(_) => (16, true),
+                    I32(_) => (32, true),
+                    I64(_) => (64, true),
+                    Isize(Is32(_)) => (32, true),
+                    U16(_) => (16, false),
+                    U32(_) => (32, false),
+                    U64(_) => (64, false),
+                    _ => bug!("inspirv: Unsupported enum base type ({:?})", discr),
+                };
+
+                NoRef(Type::Int(bit_width, signed))
+            }
 
             ty::TyRef(_, ty_mut) => {
                 Ref {
@@ -1345,7 +1375,21 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     Some(BranchInstruction::Unreachable(OpUnreachable));
             }
 
-            // &If { cond, targets } => { },
+            If { ref cond, targets: (branch_true, branch_false) } => {
+                let cond = self.trans_operand(cond);
+                match cond {
+                    SpirvOperand::Consume(lvalue) => {
+
+                    },
+
+                    SpirvOperand::Constant(id, _) => {
+
+                    },
+
+                    _ => self.ctxt.tcx.sess.span_err(terminator.source_info.span, "inspirv: Unhandled if condition operand."),
+                }
+            }
+
             // &Switch { discr, adt_def, targets } => { },
             // &SwitchInt { discr, switch_ty, values, targets } => { },
             // &Resume => { },

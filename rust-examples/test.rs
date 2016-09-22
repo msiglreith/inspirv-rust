@@ -7,8 +7,13 @@
 mod std_spirv;
 use std_spirv::*;
 
+pub enum Ordering {
+    Less,
+    Equal,
+}
+
 fn foo() {
-    let mut x = 0;
-    let y = &mut x;
-    *y = 2;
+    let mut x = Ordering::Less;
+    let y = Ordering::Equal;
+    let z = y;
 }

@@ -52,7 +52,7 @@ fn main() {
     env_logger::init().unwrap();
 
     let inspirv_compiler_args = ["-h", "--help"];
-    let rustc_args: Vec<String> =
+    let mut rustc_args: Vec<String> =
         std::env::args().filter(|arg| !inspirv_compiler_args.contains(&arg.as_ref())).collect();
 
     // TODO: use a command line parsing library
@@ -68,6 +68,7 @@ fn main() {
         }
     }
 
+    rustc_args.push("--target=etc/spirv.json".into());
     match rustc_driver::run_compiler(&rustc_args, &mut SpirvCompilerCalls) {
         (Ok(_), _) => process::exit(0),
         (Err(code), _) => { println!("error: {:?}", code); process::exit(code as i32) },
