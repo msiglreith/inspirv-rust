@@ -24,23 +24,10 @@ use inspirv::core::enumeration::*;
 use inspirv::instruction::BranchInstruction;
 use inspirv_builder::function::{Argument, LocalVar, Block};
 use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueFloat};
+use intrinsic::Intrinsic;
 
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Intrinsic {
-    Swizzle {
-        components_out: u32,
-        components_in: u32
-    },
-    Shuffle {
-        components_out: u32,
-        components_in0: u32,
-        components_in1: u32
-    },
-    VectorNew { components: u32 },
-}
 
 #[derive(Clone, Debug)]
 enum InspirvAttribute {
@@ -121,7 +108,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 }
 
 #[derive(Clone, Debug)]
-enum SpirvType {
+pub enum SpirvType {
     NoRef(Type),
     Ref {
         ty: Type,
@@ -170,10 +157,10 @@ impl Deref for SpirvType {
     }
 }
 
-type IdAndType = (Id, SpirvType);
+pub type IdAndType = (Id, SpirvType);
 
 #[derive(Clone, Debug)]
-enum SpirvOperand {
+pub enum SpirvOperand {
     Consume(SpirvLvalue),
     Constant(Id, SpirvType),
     FnCall(DefId),
@@ -181,7 +168,7 @@ enum SpirvOperand {
 }
 
 impl SpirvOperand {
-    fn is_constant(&self) -> bool {
+    pub fn is_constant(&self) -> bool {
         match *self {
             SpirvOperand::Constant(..) => true,
             _ => false,
@@ -190,7 +177,7 @@ impl SpirvOperand {
 }
 
 #[derive(Clone, Debug)]
-enum SpirvLvalue {
+pub enum SpirvLvalue {
     // Standard variables, can be temporary or named variables, etc.
     Variable(Id, SpirvType, StorageClass),
 
@@ -208,33 +195,27 @@ enum SpirvLvalue {
 }
 
 #[derive(Clone)]
-enum FuncArg {
+pub enum FuncArg {
     Argument(IdAndType),
     Interface(Vec<(Id, Type)>),
     ConstBuffer(IdAndType),
 }
 
 #[derive(Clone)]
-enum FuncReturn {
+pub enum FuncReturn {
     Return(IdAndType),
     Interface(Vec<(Id, Type)>),
 }
 
-struct InspirvModuleCtxt<'v, 'tcx: 'v> {
+pub struct InspirvModuleCtxt<'v, 'tcx: 'v> {
     tcx: &'v TyCtxt<'v, 'tcx, 'tcx>,
     mir_map: &'v MirMap<'tcx>,
-    builder: ModuleBuilder,
+    pub builder: ModuleBuilder,
 
     arg_ids: IndexVec<Arg, Option<FuncArg>>,
     var_ids: IndexVec<Var, IdAndType>,
     temp_ids: IndexVec<Temp, IdAndType>,
     return_ids: Option<FuncReturn>,
-}
-
-struct InspirvBlock<'a, 'b, 'v: 'a, 'tcx: 'v> {
-    ctxt: &'a mut InspirvModuleCtxt<'v, 'tcx>,
-    block: &'b mut Block,
-    labels: &'b IndexVec<BasicBlock, Id>,
 }
 
 fn execution_model_from_str(name: &str) -> Option<ExecutionModel> {
@@ -698,8 +679,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     // Needed for assignment of references to keep pass the referent
     fn resolve_ref_lvalue<'a>(&'a mut self, lvalue: &'a Lvalue<'tcx>) -> Option<&'a mut SpirvType> {
         use rustc::mir::repr::Lvalue::*;
-        use inspirv::core::enumeration::StorageClass::*;
-        use self::SpirvType::*;
         match *lvalue {
             Arg(id) => {
                 if let Some(ref mut arg) = self.arg_ids[id] {
@@ -745,18 +724,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 SpirvLvalue::Variable(chain_id, SpirvType::NoRef(ty.clone()), storage_class)
             },
             _ => lvalue
-        }
-    }
-
-    fn extract_u32_from_operand(&mut self, operand: &Operand<'tcx>) -> u32 {
-        match *operand {
-            Operand::Constant(ref c) => {
-                match c.literal {
-                    Literal::Value { value: Integral(ConstInt::U32(v)) } => v,
-                    _ => bug!("Expected u32 constant `{:?}", operand)
-                }
-            }
-            _ => bug!("Expected constant operand `{:?}`", operand)
         }
     }
 
@@ -1177,6 +1144,12 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     }
 }
 
+pub struct InspirvBlock<'a, 'b, 'v: 'a, 'tcx: 'v> {
+    pub ctxt: &'a mut InspirvModuleCtxt<'v, 'tcx>,
+    pub block: &'b mut Block,
+    pub labels: &'b IndexVec<BasicBlock, Id>,
+}
+
 impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
     fn trans_stmnt(&mut self, stmt: &Statement<'tcx>) {
         match stmt.kind {
@@ -1301,7 +1274,8 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                                 Aggregate(ref kind, ref _operands) => {
                                     match *kind {
-                                        AggregateKind::Adt(adt, index, _, _) => {
+                                        // Only care about c-enums, we can't handle the other things
+                                        AggregateKind::Adt(adt, index, _, _) if adt.is_enum() => {
                                             use rustc_const_math::ConstInt::*;
                                             use rustc_const_math::ConstIsize::*;
 
@@ -1473,7 +1447,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    fn trans_operand(&mut self, operand: &Operand<'tcx>) -> SpirvOperand {
+    pub fn trans_operand(&mut self, operand: &Operand<'tcx>) -> SpirvOperand {
         use rustc::mir::repr::Operand::*;
         match *operand {
             Consume(ref lvalue) => {
@@ -1563,112 +1537,6 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         
         // store
         self.block.emit_instruction(OpStore(result_id, add_result, None));
-    }
-
-    fn emit_intrinsic(&mut self, intrinsic: Intrinsic, args: &[Operand<'tcx>]) -> Id {
-        use self::Intrinsic::*;
-        let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<Vec<_>>();
-        let component_ids = args_ops.iter().filter_map(
-                                |arg| match *arg {
-                                    SpirvOperand::Constant(c, _) => Some(c),
-                                    SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
-                                        let op_id = self.ctxt.builder.alloc_id();
-                                        let op_load = OpLoad(self.ctxt.builder.define_type(op_ty), op_id, op_ptr_id, None);
-                                        self.block.emit_instruction(op_load);
-                                        Some(op_id)
-                                    }
-                                    _ => None
-                                }).collect::<Vec<_>>();
-
-        match intrinsic {
-            VectorNew { components } => self.emit_intrinsic_vector_new(components, args_ops, component_ids),
-            Swizzle { components_out, components_in } => self.emit_instrinsic_swizzle(
-                                                                    components_in,
-                                                                    components_out,
-                                                                    args,
-                                                                    args_ops,
-                                                                    component_ids,
-                                                              ),
-            Shuffle { components_out:4 , components_in0: 4, components_in1: 4 } => {
-                let ty = Type::Vector(Box::new(Type::Float(32)), 4);
-                if args_ops[2..].iter().all(|arg| arg.is_constant()) {
-                    // all args are constants!
-                    let result_id = self.ctxt.builder.alloc_id();
-                    // components
-                    let comp_x = self.ctxt.extract_u32_from_operand(&args[2]);
-                    if comp_x >= 8 { bug!{"inspirv: shuffle component `x` out of range {:?}", comp_x} }
-                    let comp_y = self.ctxt.extract_u32_from_operand(&args[3]);
-                    if comp_y >= 8 { bug!{"inspirv: shuffle component `y` out of range {:?}", comp_y} }
-                    let comp_z = self.ctxt.extract_u32_from_operand(&args[4]);
-                    if comp_z >= 8 { bug!{"inspirv: shuffle component `z` out of range {:?}", comp_z} }
-                    let comp_w = self.ctxt.extract_u32_from_operand(&args[5]);
-                    if comp_w >= 8 { bug!{"inspirv: shuffle component `w` out of range {:?}", comp_w} }
-                    self.block.emit_instruction(
-                        OpVectorShuffle(
-                            self.ctxt.builder.define_type(&ty),
-                            result_id,
-                            component_ids[0],
-                            component_ids[1],
-                            vec![
-                                LiteralInteger(comp_x),
-                                LiteralInteger(comp_y),
-                                LiteralInteger(comp_z),
-                                LiteralInteger(comp_w),
-                            ],
-                        )
-                    );
-                    result_id
-                } else {
-                    panic!("Unhandled dynamic `shuffle4`")
-                }
-            }
-            _ => bug!("Unknown function call intrinsic")
-        }
-    }
-
-    fn emit_intrinsic_vector_new(&mut self, num_components: u32, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
-        assert!(num_components as usize == component_ids.len());
-        let ty = Type::Vector(Box::new(Type::Float(32)), num_components as u32);
-        if args.iter().all(|arg| arg.is_constant()) {
-            // all args are constants!
-            let constant = module::Constant::Composite(ty, component_ids);
-            self.ctxt.builder.define_constant(constant)
-        } else {
-            let composite_id = self.ctxt.builder.alloc_id();
-            self.block.emit_instruction(
-                OpCompositeConstruct(self.ctxt.builder.define_type(&ty), composite_id, component_ids)
-            );
-            composite_id
-        }
-    }
-
-    fn emit_instrinsic_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
-        assert!(num_output_components as usize == component_ids.len());
-        let ty = Type::Vector(Box::new(Type::Float(32)), num_output_components as u32);
-        if args_ops[1..].iter().all(|arg| arg.is_constant()) {
-            // all args are constants!
-            let result_id = self.ctxt.builder.alloc_id();
-            // components
-            let components = (0..num_output_components as usize).map(|i| {
-                let component = self.ctxt.extract_u32_from_operand(&args[i+1]);
-                if component >= num_input_components as u32 {
-                    bug!{"inspirv: swizzle component({:?}) out of range {:?}", i, component}
-                }
-                LiteralInteger(component)
-            }).collect::<Vec<_>>();
-            self.block.emit_instruction(
-                OpVectorShuffle(
-                    self.ctxt.builder.define_type(&ty),
-                    result_id,
-                    component_ids[0],
-                    component_ids[0],
-                    components
-                )
-            );
-            result_id
-        } else {
-            panic!("Unhandled dynamic swizzle!")
-        }
     }
 }
 

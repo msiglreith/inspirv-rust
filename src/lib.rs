@@ -30,5 +30,6 @@ extern crate inspirv_builder;
 
 pub mod error;
 pub mod trans;
+mod intrinsic;
 mod monomorphize;
 mod traits;
