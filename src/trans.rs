@@ -826,7 +826,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                         }
                     } else if const_buffer {
                         if let ty::TyAdt(_adt, _subs) = arg.ty.sty {
-
+                            let ty = self.rust_ty_to_spirv(arg.ty);
+                            let id = self.builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
+                            self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty)))));
                         } else {
                             bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
                         }
@@ -861,9 +863,11 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 }
             }
 
-            // Entry Point Handling
-            // These functions don't have actual input/output parameters
-            // We use them for the shader interface and uniforms
+            // Return type
+            //
+            // Entry Point Handling:
+            //  These functions don't have actual input/output parameters
+            //  We use them for the shader interface and uniforms
             if let Some(&InspirvAttribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
                 match mir.return_ty.sty {
                     ty::TyAdt(adt, subs) => {
