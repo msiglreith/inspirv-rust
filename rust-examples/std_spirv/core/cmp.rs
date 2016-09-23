@@ -9,7 +9,7 @@ pub trait PartialEq<Rhs: ?Sized = Self> {
 
     /// This method tests for `!=`.
     #[inline]
-    fn ne(&self, other: &Rhs) -> bool { !self.eq(other) }
+    fn ne(&self, other: &Rhs) -> bool;
 }
 
 pub trait Eq: PartialEq<Self> { }

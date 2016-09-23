@@ -1149,8 +1149,8 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     bug!("inspirv: Enums can only contain unit type structs ({:?})", t.sty);
                 }
 
-                let discr = adt.variants[0].disr_val;
-                let (bit_width, signed) = match discr {
+                let disr = adt.variants[0].disr_val;
+                let (bit_width, signed) = match disr {
                     I16(_) => (16, true),
                     I32(_) => (32, true),
                     I64(_) => (64, true),
@@ -1158,7 +1158,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                     U16(_) => (16, false),
                     U32(_) => (32, false),
                     U64(_) => (64, false),
-                    _ => bug!("inspirv: Unsupported enum base type ({:?})", discr),
+                    _ => bug!("inspirv: Unsupported enum base type ({:?})", disr),
                 };
 
                 NoRef(Type::Int(bit_width, signed))
@@ -1299,7 +1299,32 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                     // TODO
                                 }
 
-                                Aggregate(ref _kind, ref _operands) => {}
+                                Aggregate(ref kind, ref _operands) => {
+                                    match *kind {
+                                        AggregateKind::Adt(adt, index, _, _) => {
+                                            use rustc_const_math::ConstInt::*;
+                                            use rustc_const_math::ConstIsize::*;
+
+                                            let disr = adt.variants[index].disr_val;
+                                            println!("{:?}", disr);
+
+                                            let constant = match disr {
+                                                I16(v) => module::Constant::Scalar(ConstValue::I16(v)),
+                                                I32(v) => module::Constant::Scalar(ConstValue::I32(v)),
+                                                I64(v) => module::Constant::Scalar(ConstValue::I64(v)),
+                                                Isize(Is32(v)) => module::Constant::Scalar(ConstValue::I32(v)),
+                                                U16(v) => module::Constant::Scalar(ConstValue::U16(v)),
+                                                U32(v) => module::Constant::Scalar(ConstValue::U32(v)),
+                                                U64(v) => module::Constant::Scalar(ConstValue::U64(v)),
+                                                _ => bug!("inspirv: Unsupported enum base type ({:?})", disr),
+                                            };
+
+                                            let constant_id = self.ctxt.builder.define_constant(constant);
+                                            self.block.emit_instruction(OpStore(lvalue_id, constant_id, None));
+                                        }
+                                        _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unhandled aggregate type"),
+                                    }                                   
+                                }
 
                                 Box(..) => {
                                     self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Invalid box r-value")

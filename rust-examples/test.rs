@@ -8,8 +8,8 @@ mod std_spirv;
 use std_spirv::*;
 
 pub enum Ordering {
-    Less,
-    Equal,
+    Less = 10,
+    Equal = 2*1,
 }
 
 fn foo() {
