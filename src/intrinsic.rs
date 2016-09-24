@@ -47,7 +47,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                                                     component_ids,
                                                               ),
             Shuffle { components_out:4 , components_in0: 4, components_in1: 4 } => {
-                let ty = Type::Vector(Box::new(Type::Float(32)), 4);
+                let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: 4 };
                 if args_ops[2..].iter().all(|arg| arg.is_constant()) {
                     // all args are constants!
                     let result_id = self.ctxt.builder.alloc_id();
@@ -87,7 +87,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
     fn emit_instrinsic_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
         assert!(num_output_components as usize == component_ids.len());
-        let ty = Type::Vector(Box::new(Type::Float(32)), num_output_components as u32);
+        let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: num_output_components as u32 };
         if args_ops[1..].iter().all(|arg| arg.is_constant()) {
             // all args are constants!
             let result_id = self.ctxt.builder.alloc_id();
@@ -116,7 +116,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
     fn emit_intrinsic_vector_new(&mut self, num_components: u32, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
         assert!(num_components as usize == component_ids.len());
-        let ty = Type::Vector(Box::new(Type::Float(32)), num_components as u32);
+        let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: num_components as u32 };
         if args.iter().all(|arg| arg.is_constant()) {
             // all args are constants!
             let constant = module::Constant::Composite(ty, component_ids);

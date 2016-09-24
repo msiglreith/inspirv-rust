@@ -705,12 +705,25 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             ty::TyAdt(adt, subs) if adt.is_struct() => {
                 let attrs = self.get_node_attributes(adt.did);
                 let internal_type = attrs.iter().find(|attr| match **attr {
-                    Attribute::Vector { .. } => true,
+                    Attribute::Vector { .. }
+                    | Attribute::Matrix { .. } => true,
                     _ => false,
                 });
                 if let Some(internal_type) = internal_type {
                     match *internal_type {
-                        Attribute::Vector { ref base, components } => NoRef(Type::Vector(base.clone(), components as u32)),
+                        Attribute::Vector { ref base, components } => {
+                            NoRef(Type::Vector {
+                                base: base.clone(),
+                                components: components as u32,
+                            })
+                        }
+                        Attribute::Matrix { ref base, rows, cols } => {
+                            NoRef(Type::Matrix {
+                                base: base.clone(),
+                                rows: rows as u32,
+                                cols: cols as u32,
+                            })
+                        }
                         _ => bug!("Unhandled internal type ({:?})", *internal_type),
                     }
                 } else {

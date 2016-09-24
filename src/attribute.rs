@@ -18,6 +18,11 @@ pub enum Attribute {
         base: Box<Type>,
         components: u64,
     },
+    Matrix {
+        base: Box<Type>,
+        rows: u64,
+        cols: u64,
+    },
     EntryPoint {
         stage: ExecutionModel,
         execution_modes: HashMap<ExecutionModeKind, ExecutionMode>,
@@ -96,12 +101,12 @@ pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attr
                                                         match item.node {
                                                             MetaItemKind::NameValue(ref name, ref value) => {
                                                                 match &**name {
-                                                                    "components" => { // TODO: low: check > 1
+                                                                    "components" => {
                                                                         components = match value.node {
                                                                             syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
                                                                             _ => panic!("attribute value needs to be interger (>2)"),
                                                                         }
-                                                                    },
+                                                                    }
                                                                     "base" => {
                                                                         base = match &*extract_attr_str(value) {
                                                                             "bool" => Some(Type::Bool),
@@ -113,8 +118,7 @@ pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attr
                                                                                 None
                                                                             }
                                                                         }
-                                                                    },
-
+                                                                    }
                                                                     _ => sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
                                                                 }
                                                             }
@@ -135,6 +139,61 @@ pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attr
                                                 attrs.push(Attribute::Vector { 
                                                     base: Box::new(base.unwrap()),
                                                     components: components.unwrap()
+                                                });
+                                            }
+                                        }
+
+                                        "matrix" => {
+                                            let mut base = None;
+                                            let mut rows = None;
+                                            let mut cols = None;
+                                            for item in items {
+                                                match item.node {
+                                                    NestedMetaItemKind::MetaItem(ref item) => {
+                                                        match item.node {
+                                                            MetaItemKind::NameValue(ref name, ref value) => {
+                                                                match &**name {
+                                                                    "rows" => {
+                                                                        rows = match value.node {
+                                                                            syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
+                                                                            _ => panic!("attribute value needs to be interger (>2)"),
+                                                                        }
+                                                                    }
+                                                                    "cols" => {
+                                                                        cols = match value.node {
+                                                                            syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
+                                                                            _ => panic!("attribute value needs to be interger (>2)"),
+                                                                        }
+                                                                    }
+                                                                    "base" => {
+                                                                        base = match &*extract_attr_str(value) {
+                                                                            "bool" => Some(Type::Bool),
+                                                                            "f32" => Some(Type::Float(32)),
+                                                                            "f64" => Some(Type::Float(64)),
+
+                                                                            _ => {
+                                                                                sess.span_err(item.span, "Unsupported `inspirv` matrix base type");
+                                                                                None
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    _ => sess.span_err(item.span, "Unknown `inspirv` matrix attribute item"),
+                                                                }
+                                                            }
+                                                            _ => sess.span_err(item.span, "Unknown `inspirv` matrix attribute item"),
+                                                        }
+                                                    }
+                                                    _ => sess.span_err(item.span, "Unknown `inspirv` matrix attribute item"),
+                                                }
+                                            }
+
+                                            if base.is_none() || rows.is_none() || cols.is_none() {
+                                                sess.span_err(item.span, "`inspirv` matrix misses `base`, `rows` or `component` attributes");
+                                            } else {
+                                                attrs.push(Attribute::Matrix { 
+                                                    base: Box::new(base.unwrap()),
+                                                    rows: rows.unwrap(),
+                                                    cols: cols.unwrap(),
                                                 });
                                             }
                                         }
