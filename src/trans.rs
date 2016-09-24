@@ -724,7 +724,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 use rustc_const_math::ConstIsize::*;
 
                 if adt.variants.is_empty() {
-                    // TODO: probably won't happen
+                    // TODO: probably won't happen?
                     return NoRef(Type::Void)
                 }
 
@@ -1141,6 +1141,30 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
             (BinOp::Add, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
                 OpFAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            (BinOp::Sub, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
+                OpISub(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            (BinOp::Sub, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
+                OpFSub(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            (BinOp::Mul, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
+                OpIMul(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            (BinOp::Mul, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
+                OpFMul(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            (BinOp::Div, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
+                OpSDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+            }
+
+            (BinOp::Div, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
+                OpUDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
             }
 
             (BinOp::Div, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
