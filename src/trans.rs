@@ -20,6 +20,7 @@ use inspirv::types::*;
 use inspirv::core::instruction::*;
 use inspirv::core::enumeration::*;
 use inspirv::instruction::BranchInstruction;
+use inspirv_builder;
 use inspirv_builder::function::{Argument, LocalVar, Block};
 use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueFloat};
 use attribute::{self, Attribute};
@@ -345,7 +346,32 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     }
 
     fn trans_const(&mut self, id: NodeId, mir: &'v Mir<'tcx>) {
+        self.arg_ids = IndexVec::new();
+
+        let const_name = &*self.tcx.map.name(id).as_str();
+        let mut const_fn = self.builder.define_function_named(const_name);
+
+        let return_ty = self.rust_ty_to_spirv_ref(mir.return_ty);
+        if return_ty.is_ref() {
+            bug!("References as return type are currently unsupported ({:?})", mir.return_ty)
+        }
+        self.return_ids = if let &Type::Void = return_ty.ty() {
+            None
+        } else {
+            let id = self.builder.alloc_id();
+            let local_var = LocalVar {
+                id: id,
+                ty: return_ty.clone().into(),
+            };
+            const_fn.variables.push(local_var);
+            Some(FuncReturn::Return((id, return_ty.clone())))
+        };
+
+        const_fn.ret_ty = return_ty.into();
+
         println!("{:?} {:?}", id, mir);
+
+        self.trans_mir_fn(const_fn, mir);
     }
 
     fn trans_fn(&mut self, id: NodeId, mir: &'v Mir<'tcx>) {
@@ -592,6 +618,10 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
         println!("{:?}", (id, self.tcx.map.name(id).as_str(), mir));
 
+        self.trans_mir_fn(fn_module, mir);
+    }
+
+    fn trans_mir_fn(&mut self, mut fn_module: inspirv_builder::Function, mir: &'v Mir<'tcx>) {
         // local variables and temporaries
         self.var_ids = {
             let mut ids: IndexVec<Var, IdAndType> = IndexVec::new();
@@ -644,7 +674,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 block_ctxt.trans_stmnt(stmt);
             }
 
-            block_ctxt.trans_terminator(bb.terminator());
+            block_ctxt.trans_terminator(&fn_module.ret_ty, bb.terminator());
         }
 
         // Push function and clear variable stack
@@ -813,8 +843,11 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                             self.block.emit_instruction(OpCompositeConstruct(self.ctxt.builder.define_type(&lvalue_ty.into()), composite_id, ids));
                                             self.block.emit_instruction(OpStore(lvalue_id, composite_id, None));
                                         }
-                                        _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span,
-                                                           "inspirv: Unsupported rvalue!"),
+                                        _ => {
+                                            println!("{:?}", op);
+                                            self.ctxt.tcx.sess.span_err(stmt.source_info.span,
+                                                           "inspirv: Unsupported rvalue!");
+                                        }
                                     }
                                 }
 
@@ -926,6 +959,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                             let constant_id = self.ctxt.builder.define_constant(constant);
                                             self.block.emit_instruction(OpStore(lvalue_id, constant_id, None));
                                         }
+                                        // TODO: structs
                                         _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unhandled aggregate type"),
                                     }                                   
                                 }
@@ -986,7 +1020,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    fn trans_terminator(&mut self, terminator: &Terminator<'tcx>) {
+    fn trans_terminator(&mut self, ret_ty: &Type, terminator: &Terminator<'tcx>) {
         use rustc::mir::repr::TerminatorKind::*;
         match terminator.kind {
             Goto { ref target } => {
@@ -994,9 +1028,15 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             }
 
             Return => {
-                // TODO: low: handle return value
-                self.block.branch_instr =
-                    Some(BranchInstruction::Return(OpReturn));
+                match (ret_ty, &self.ctxt.return_ids) {
+                    (&Type::Void, _) | (_, &None) => {
+                        self.block.branch_instr = Some(BranchInstruction::Return(OpReturn));
+                    }
+                    (_, &Some(FuncReturn::Return((id, _)))) => {
+                        self.block.branch_instr = Some(BranchInstruction::ReturnValue(OpReturnValue(id)));
+                    }
+                    (_, &Some(FuncReturn::Interface(..))) => unreachable!(),
+                }
             }
 
             Unreachable => {
