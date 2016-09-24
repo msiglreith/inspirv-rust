@@ -11,9 +11,7 @@ use rustc::hir::def_id::DefId;
 use rustc::util::common::time;
 use rustc_borrowck as borrowck;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
-use syntax;
-use syntax::ast::{LitKind, LitIntType, NodeId, IntTy, UintTy, FloatTy, MetaItemKind, NestedMetaItemKind};
-use std::collections::HashMap;
+use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use std::fs::File;
 use std::ops::Deref;
 use inspirv;
@@ -24,36 +22,10 @@ use inspirv::core::enumeration::*;
 use inspirv::instruction::BranchInstruction;
 use inspirv_builder::function::{Argument, LocalVar, Block};
 use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueFloat};
-use intrinsic::Intrinsic;
+use attribute::{self, Attribute};
 
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
-
-#[derive(Clone, Debug)]
-enum InspirvAttribute {
-    Interface,
-    ConstBuffer,
-    Location {
-        location: u64,
-    },
-    Vector {
-        base: Box<Type>,
-        components: u64,
-    },
-    EntryPoint {
-        stage: ExecutionModel,
-        execution_modes: HashMap<ExecutionModeKind, ExecutionMode>,
-    },
-    CompilerBuiltin,
-    Builtin {
-        builtin: BuiltIn
-    },
-    Intrinsic(Intrinsic),
-    Descriptor {
-        set: u64,
-        binding: u64,
-    },
-}
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                                     mut mir_map: &mut MirMap<'tcx>,
@@ -218,58 +190,6 @@ pub struct InspirvModuleCtxt<'v, 'tcx: 'v> {
     return_ids: Option<FuncReturn>,
 }
 
-fn execution_model_from_str(name: &str) -> Option<ExecutionModel> {
-    use inspirv::core::enumeration::ExecutionModel::*;
-    match name {
-        "vertex" => Some(ExecutionModelVertex),
-        "tessellation_control" => Some(ExecutionModelTessellationControl),
-        "tessellation_eval" => Some(ExecutionModelTessellationEvaluation),
-        "geometry" => Some(ExecutionModelGeometry),
-        "fragment" => Some(ExecutionModelFragment),
-        "compute" => Some(ExecutionModelGLCompute),
-        "kernel" => Some(ExecutionModelKernel),
-        _ => None,
-    }
-}
-
-fn builtin_from_str(name: &str) -> Option<BuiltIn> {
-    use inspirv::core::enumeration::BuiltIn::*;
-    match name {
-        // Should be all possible builtIn's for shaders 
-        "Position" => Some(BuiltInPosition),
-        "PointSize" => Some(BuiltInPointSize),
-        "ClipDistance" => Some(BuiltInClipDistance),
-        "CullDistance" => Some(BuiltInCullDistance),
-        "VertexId" => Some(BuiltInVertexId),
-        "InstanceId" => Some(BuiltInInstanceId),
-        "PrimitiveId" => Some(BuiltInPrimitiveId),
-        "Layer" => Some(BuiltInLayer),
-        "InvocationId" => Some(BuiltInInvocationId),
-        "ViewportIndex" => Some(BuiltInViewportIndex),
-        "TessLevelOuter" => Some(BuiltInTessLevelOuter),
-        "TessLevelInner" => Some(BuiltInTessLevelInner),
-        "TessCoord" => Some(BuiltInTessCoord),
-        "PatchVertices" => Some(BuiltInPatchVertices),
-        "FragCoord" => Some(BuiltInFragCoord),
-        "PointCoord" => Some(BuiltInPointCoord),
-        "FrontFacing" => Some(BuiltInFrontFacing),
-        "SampleId" => Some(BuiltInSampleId),
-        "SamplePosition" => Some(BuiltInSamplePosition),
-        "SampleMask" => Some(BuiltInSampleMask),
-        "FragDepth" => Some(BuiltInFragDepth),
-        "HelperInvocation" => Some(BuiltInHelperInvocation),
-        "NumWorkgroups" => Some(BuiltInNumWorkgroups),
-        "WorkgroupSize" => Some(BuiltInWorkgroupSize),
-        "WorkgroupId" => Some(BuiltInWorkgroupId),
-        "LocalInvocationId" => Some(BuiltInLocalInvocationId),
-        "GlobalInvocationId" => Some(BuiltInGlobalInvocationId),
-        "LocalInvocationIndex" => Some(BuiltInLocalInvocationIndex),
-        "VertexIndex" => Some(BuiltInVertexIndex),
-        "InstanceIndex" => Some(BuiltInInstanceIndex),
-        _ => None,
-    }
-}
-
 impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn trans(&mut self) {
         let def_ids = self.mir_map.map.keys();
@@ -297,313 +217,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         while let Some(instr) = reader.read_instruction().unwrap() {
             println!("{:?}", instr);
         }
-    }
-
-    fn parse_inspirv_attributes(&self, ast_attribs: &[syntax::ast::Attribute]) -> Vec<InspirvAttribute> {
-        let mut attrs = Vec::new();
-
-        for attr in ast_attribs {
-            match attr.node.value.node {
-                MetaItemKind::List(ref name, ref items) if name == "inspirv" => {
-                    for item in items {
-                        match item.node {
-                            NestedMetaItemKind::MetaItem(ref item) => {
-                                match item.node {
-                                    MetaItemKind::NameValue(ref name, ref value) => {
-                                        match &**name {
-                                            "entry_point" => {
-                                                let stage = execution_model_from_str(&*extract_attr_str(value));
-                                                if let Some(stage) = stage {
-                                                    attrs.push(InspirvAttribute::EntryPoint {
-                                                        stage: stage,
-                                                        execution_modes: HashMap::new(),
-                                                    });
-                                                } else {
-                                                    self.tcx.sess.span_err(item.span, "Unknown `inspirv` entry_point execution model");
-                                                }
-                                            },
-                                            "location" => {
-                                                match value.node {
-                                                    LitKind::Int(b, LitIntType::Unsigned(..))
-                                                    | LitKind::Int(b, LitIntType::Unsuffixed) => attrs.push(InspirvAttribute::Location { location: b }),
-                                                    _ => panic!("attribute value need to be valid unsigned interger"),
-                                                };
-                                            },
-                                            "builtin" => {
-                                                let builtin = builtin_from_str(&*extract_attr_str(value));
-                                                if let Some(builtin) = builtin {
-                                                    attrs.push(InspirvAttribute::Builtin { builtin: builtin });
-                                                } else {
-                                                    self.tcx.sess.span_err(item.span, "Unknown `inspirv` builtin variable");
-                                                }
-                                            },
-
-                                            _ => {
-                                                self.tcx.sess.span_err(item.span, "Unknown `inspirv` attribute name value item")
-                                            }
-                                        }
-                                    },
-                                    MetaItemKind::Word(ref name) => {
-                                        match &**name {
-                                            "compiler_builtin" => attrs.push(InspirvAttribute::CompilerBuiltin),
-                                            "interface" => attrs.push(InspirvAttribute::Interface),
-                                            "const_buffer" => attrs.push(InspirvAttribute::ConstBuffer),
-                                            _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv`attribute word item"),
-                                        }
-                                    },
-                                    MetaItemKind::List(ref name, ref items) => {
-                                        match &**name {
-                                            "vector" => {
-                                                let mut base = None;
-                                                let mut components = None;
-                                                for item in items {
-                                                    match item.node {
-                                                        NestedMetaItemKind::MetaItem(ref item) => {
-                                                            match item.node {
-                                                                MetaItemKind::NameValue(ref name, ref value) => {
-                                                                    match &**name {
-                                                                        "components" => { // TODO: low: check > 1
-                                                                            components = match value.node {
-                                                                                syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
-                                                                                _ => panic!("attribute value needs to be interger (>2)"),
-                                                                            }
-                                                                        },
-                                                                        "base" => {
-                                                                            base = match &*extract_attr_str(value) {
-                                                                                "bool" => Some(Type::Bool),
-                                                                                "f32" => Some(Type::Float(32)),
-                                                                                "f64" => Some(Type::Float(64)),
-
-                                                                                _ => {
-                                                                                    self.tcx.sess.span_err(item.span, "Unsupported `inspirv` vector base type");
-                                                                                    None
-                                                                                }
-                                                                            }
-                                                                        },
-
-                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
-                                                                    }
-                                                                }
-                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
-                                                            }
-                                                        }
-                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
-                                                    }
-                                                }
-
-                                                if base.is_none() || components.is_none() {
-                                                    self.tcx.sess.span_err(item.span,
-                                                                           "`inspirv` vector \
-                                                                            misses `base` or \
-                                                                            `component` \
-                                                                            attributes");
-                                                } else {
-                                                    attrs.push(InspirvAttribute::Vector { 
-                                                        base: Box::new(base.unwrap()),
-                                                        components: components.unwrap()
-                                                    });
-                                                }
-                                            }
-
-                                            "descriptor" => {
-                                                let mut set = None;
-                                                let mut binding = None;
-                                                for item in items {
-                                                    match item.node {
-                                                        NestedMetaItemKind::MetaItem(ref item) => {
-                                                            match item.node {
-                                                                MetaItemKind::NameValue(ref name, ref value) => {
-                                                                    match &**name {
-                                                                        "set" => {
-                                                                            set = match value.node {
-                                                                                syntax::ast::LitKind::Int(b, _) => Some(b),
-                                                                                _ => panic!("attribute value needs to be interger"),
-                                                                            }
-                                                                        },
-                                                                        "binding" => {
-                                                                            binding = match value.node {
-                                                                                syntax::ast::LitKind::Int(b, _) => Some(b),
-                                                                                _ => panic!("attribute value needs to be interger"),
-                                                                            }
-                                                                        },
-
-                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
-                                                                    }
-                                                                }
-                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
-                                                            }
-                                                        }
-                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
-                                                    }
-                                                }
-
-                                                if set.is_none() || binding.is_none() {
-                                                    self.tcx.sess.span_err(item.span, "`inspirv` descriptor misses `set` or `binding` attributes");
-                                                } else {
-                                                    attrs.push(InspirvAttribute::Descriptor { 
-                                                        set: set.unwrap(),
-                                                        binding: binding.unwrap()
-                                                    });
-                                                }
-                                            }
-
-                                            // intrinsics with additional data `instrinsic(name(..))` or `instrinsic(name)`
-                                            "intrinsic" => {
-                                                match items[0].node {
-                                                    NestedMetaItemKind::MetaItem(ref item) => {
-                                                        match item.node {
-                                                            MetaItemKind::List(ref name, ref items) => {
-                                                                match &**name {
-                                                                    "shuffle" => {
-                                                                        let mut num_components_in0 = None;
-                                                                        let mut num_components_in1 = None;
-                                                                        let mut num_components_out = None;
-                                                                        for item in items {
-                                                                            match item.node {
-                                                                                NestedMetaItemKind::MetaItem(ref item) => {
-                                                                                    match item.node {
-                                                                                        MetaItemKind::NameValue(ref name, ref value) => {
-                                                                                            match &**name {
-                                                                                                "num_in0" => {
-                                                                                                    num_components_in0 = match value.node {
-                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
-                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
-                                                                                                    }
-                                                                                                },
-                                                                                                "num_in1" => {
-                                                                                                    num_components_in1 = match value.node {
-                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
-                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
-                                                                                                    }
-                                                                                                },
-                                                                                                "num_out" => {
-                                                                                                    num_components_out = match value.node {
-                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
-                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
-                                                                                                    }
-                                                                                                },
-
-                                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` shuffle intrinsic attribute item"),
-                                                                                            }
-                                                                                        }
-                                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` shuffle intrinsic attribute item"),
-                                                                                    }
-                                                                                }
-                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` shuffle intrinsic attribute item"),
-                                                                            }
-                                                                        }
-                                                                        if num_components_in0.is_none() ||
-                                                                           num_components_in1.is_none() ||
-                                                                           num_components_out.is_none() {
-                                                                            self.tcx.sess.span_err(item.span, "`inspirv` shuffle misses `num_in0`, `num_in1` or `num_out` attributes");
-                                                                        } else {
-                                                                            let intrinsic = Intrinsic::Shuffle {
-                                                                                components_out: num_components_out.unwrap(),
-                                                                                components_in0: num_components_in0.unwrap(),
-                                                                                components_in1: num_components_in1.unwrap(),
-                                                                            };
-                                                                            attrs.push(InspirvAttribute::Intrinsic(intrinsic));
-                                                                        }
-                                                                    }
-                                                                    "swizzle" => {
-                                                                        let mut num_components_in = None;
-                                                                        let mut num_components_out = None;
-                                                                        for item in items {
-                                                                            match item.node {
-                                                                                NestedMetaItemKind::MetaItem(ref item) => {
-                                                                                    match item.node {
-                                                                                        MetaItemKind::NameValue(ref name, ref value) => {
-                                                                                            match &**name {
-                                                                                                "num_in" => {
-                                                                                                    num_components_in = match value.node {
-                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
-                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
-                                                                                                    }
-                                                                                                },
-                                                                                                "num_out" => {
-                                                                                                    num_components_out = match value.node {
-                                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
-                                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
-                                                                                                    }
-                                                                                                },
-
-                                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` swizzle intrinsic attribute item"),
-                                                                                            }
-                                                                                        }
-                                                                                        _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` swizzle intrinsic attribute item"),
-                                                                                    }
-                                                                                }
-                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` swizzle intrinsic attribute item"),
-                                                                            }
-                                                                        }
-                                                                        if num_components_in.is_none() ||
-                                                                           num_components_out.is_none() {
-                                                                            self.tcx.sess.span_err(item.span, "`inspirv` swizzle misses `num_in` or `num_out` attributes");
-                                                                        } else {
-                                                                            let intrinsic = Intrinsic::Swizzle {
-                                                                                components_out: num_components_out.unwrap(),
-                                                                                components_in: num_components_in.unwrap(),
-                                                                            };
-                                                                            attrs.push(InspirvAttribute::Intrinsic(intrinsic));
-                                                                        }
-                                                                    }
-                                                                    "vector_new" => {
-                                                                        let mut components = None;
-                                                                        for item in items {
-                                                                            match item.node {
-                                                                                NestedMetaItemKind::Literal(ref literal) => {
-                                                                                    match literal.node {
-                                                                                        syntax::ast::LitKind::Int(b, _) if b >= 2 => components = Some(b as u32),
-                                                                                        _ => panic!("attribute value needs to be interger (>2)"),
-                                                                                    }
-                                                                                }
-                                                                                _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` vector_new intrinsic attribute item"),
-                                                                            }
-                                                                        }
-                                                                        if let Some(components) = components {
-                                                                            let intrinsic = Intrinsic::VectorNew {
-                                                                                components: components,
-                                                                            };
-                                                                            attrs.push(InspirvAttribute::Intrinsic(intrinsic));
-                                                                        } else {
-                                                                            self.tcx.sess.span_err(item.span, "`inspirv` vector_new misses components attributes");
-                                                                        }
-                                                                    }
-                                                                    _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` intrinsic"),
-                                                                } 
-                                                            }
-                                                            MetaItemKind::Word(ref name) => {
-                                                                match &**name {
-                                                                    _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` intrinsic"),
-                                                                }
-                                                            }
-                                                            _ => self.tcx.sess.span_err(item.span, "Unknown `inspirv` intrinsic attribute item"),
-                                                        }
-                                                    }
-                                                    _ => self.tcx.sess.span_err(items[0].span, "Unknown `inspirv` intrinsic attribute item"),
-                                                }
-                                            }
-                                            _ => self.tcx.sess.span_err(item.span,
-                                                                       "Unknown `inspirv` \
-                                                                        attribute list item"),
-                                        }  
-                                    },
-                                }
-                            },
-                            _ => {
-                                self.tcx.sess.span_err(item.span,
-                                                       "Unknown `inspirv` attribute nested item.")
-                            }
-                        }
-                    }
-                }
-
-                // ignore non-`#[inspirv(..)]` attributes
-                _ => (),
-            }
-        }
-
-        attrs
     }
 
     // TODO: remove ugly clones if possible
@@ -738,11 +351,11 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn trans_fn(&mut self, id: NodeId, mir: &'v Mir<'tcx>) {
         self.arg_ids = IndexVec::new();
         let mut fn_module = {
-            let attrs = self.parse_inspirv_attributes(self.tcx.map.attrs(id));
+            let attrs = attribute::parse(self.tcx.sess, self.tcx.map.attrs(id));
 
             // We don't translate builtin functions, these will be handled internally
             if attrs.iter().any(|attr| match *attr {
-                InspirvAttribute::CompilerBuiltin | InspirvAttribute::Intrinsic(..) => true,
+                Attribute::CompilerBuiltin | Attribute::Intrinsic(..) => true,
                 _ => false
             }) { return; }
 
@@ -750,7 +363,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
             // check if we have an entry point
             let entry_point = attrs.iter().find(|attr| match **attr {
-                InspirvAttribute::EntryPoint { .. } => true,
+                Attribute::EntryPoint { .. } => true,
                 _ => false,
             });
 
@@ -766,11 +379,11 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 } else if let Some(ty_id) = arg.ty.ty_to_def_id() {
                     let attrs = self.get_node_attributes(ty_id);
                     let interface = attrs.iter().any(|attr| match *attr {
-                            InspirvAttribute::Interface => true,
+                            Attribute::Interface => true,
                             _ => false,
                         });
                     let const_buffer = attrs.iter().any(|attr| match *attr {
-                            InspirvAttribute::ConstBuffer => true,
+                            Attribute::ConstBuffer => true,
                             _ => false,
                         });
 
@@ -793,7 +406,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                             let field = variant_data.fields().iter()
                                                                     .find(|field| field.id == field_id)
                                                                     .expect("Unable to find struct field by id");
-                                            self.parse_inspirv_attributes(&*field.attrs)
+                                            attribute::parse(self.tcx.sess, &*field.attrs)
                                         } else {
                                             bug!("Struct item node should be a struct {:?}", item.node)
                                         }
@@ -804,11 +417,11 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
                                 for attr in field_attrs {
                                     match attr {
-                                        InspirvAttribute::Location { location } => {
+                                        Attribute::Location { location } => {
                                             self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
                                         }
                                         // Rust doesn't allow attributes associated with `type foo = bar` /:
-                                        InspirvAttribute::Builtin { builtin } => {
+                                        Attribute::Builtin { builtin } => {
                                             // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
                                             self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
                                         }
@@ -868,13 +481,13 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             // Entry Point Handling:
             //  These functions don't have actual input/output parameters
             //  We use them for the shader interface and uniforms
-            if let Some(&InspirvAttribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
+            if let Some(&Attribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
                 match mir.return_ty.sty {
                     ty::TyAdt(adt, subs) => {
                         if let Some(ty_id) = mir.return_ty.ty_to_def_id() {
                             let attrs = self.get_node_attributes(ty_id);
                             let interface = attrs.iter().any(|attr| match *attr {
-                                InspirvAttribute::Interface => true,
+                                Attribute::Interface => true,
                                 _ => false,
                             });
 
@@ -896,7 +509,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                                                 let field = variant_data.fields().iter()
                                                                         .find(|field| field.id == field_id)
                                                                         .expect("Unable to find struct field by id");
-                                                self.parse_inspirv_attributes(&*field.attrs)
+                                                attribute::parse(self.tcx.sess, &*field.attrs)
                                             } else {
                                                 bug!("Struct item node should be a struct {:?}", item.node)
                                             }
@@ -907,11 +520,11 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
                                     for attr in field_attrs {
                                         match attr {
-                                            InspirvAttribute::Location { location } => {
+                                            Attribute::Location { location } => {
                                                 self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
                                             }
                                             // Rust doesn't allow attributes associated with `type foo = bar` /:
-                                            InspirvAttribute::Builtin { builtin } => {
+                                            Attribute::Builtin { builtin } => {
                                                 // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
                                                 self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
                                             }
@@ -1047,9 +660,9 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
         self.tcx.map.as_local_node_id(id).expect("Id not defined in local crate!")
     }
 
-    fn get_node_attributes(&self, id: DefId) -> Vec<InspirvAttribute> {
+    fn get_node_attributes(&self, id: DefId) -> Vec<Attribute> {
         let node_id = self.get_node_id(id);
-        self.parse_inspirv_attributes(self.tcx.map.attrs(node_id))
+        attribute::parse(self.tcx.sess, self.tcx.map.attrs(node_id))
     }
 
     fn rust_ty_to_spirv(&self, t: Ty<'tcx>) -> Type {
@@ -1092,12 +705,12 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             ty::TyAdt(adt, subs) if adt.is_struct() => {
                 let attrs = self.get_node_attributes(adt.did);
                 let internal_type = attrs.iter().find(|attr| match **attr {
-                    InspirvAttribute::Vector { .. } => true,
+                    Attribute::Vector { .. } => true,
                     _ => false,
                 });
                 if let Some(internal_type) = internal_type {
                     match *internal_type {
-                        InspirvAttribute::Vector { ref base, components } => NoRef(Type::Vector(base.clone(), components as u32)),
+                        Attribute::Vector { ref base, components } => NoRef(Type::Vector(base.clone(), components as u32)),
                         _ => bug!("Unhandled internal type ({:?})", *internal_type),
                     }
                 } else {
@@ -1406,7 +1019,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                         let attrs = self.ctxt.get_node_attributes(def_id);
 
                         let intrinsic = attrs.iter().find(|attr| match **attr {
-                            InspirvAttribute::Intrinsic (..) => true,
+                            Attribute::Intrinsic (..) => true,
                             _ => false,
                         });
 
@@ -1416,7 +1029,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                         let lvalue = self.ctxt.resolve_lvalue(&lvalue).map(|lvalue| self.ctxt.transform_lvalue(self.block, lvalue)).expect("Unhandled lvalue");
 
                         // Translate function call
-                        let id = if let Some(&InspirvAttribute::Intrinsic(intrinsic)) = intrinsic {
+                        let id = if let Some(&Attribute::Intrinsic(intrinsic)) = intrinsic {
                             self.emit_intrinsic(intrinsic, args)
                         } else {
                             panic!("Unhandled function call")  // TODO: normal function call
@@ -1541,12 +1154,5 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         
         // store
         self.block.emit_instruction(OpStore(result_id, add_result, None));
-    }
-}
-
-fn extract_attr_str(lit: &syntax::ast::Lit) -> syntax::parse::token::InternedString {
-    match lit.node {
-        syntax::ast::LitKind::Str(ref s, _) => s.clone(),
-        _ => panic!("attribute values need to be strings"),
     }
 }

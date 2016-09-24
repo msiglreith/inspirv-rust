@@ -131,7 +131,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
     }
 }
 
-fn extract_u32_from_operand<'tcx>(operand: &Operand<'tcx>) -> u32 {
+fn extract_u32_from_operand(operand: &Operand) -> u32 {
         match *operand {
             Operand::Constant(ref c) => {
                 match c.literal {
