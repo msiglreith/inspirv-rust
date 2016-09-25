@@ -167,7 +167,7 @@ pub enum SpirvLvalue {
     Ignore,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum FuncArg {
     Argument(IdAndType),
     Interface(Vec<(Id, Type)>),
@@ -889,10 +889,20 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         SpirvOperand::Constant(op_id, _) => {
                                             self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
                                         }
-                                        SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, op_ty, _)) => {
+                                        SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, SpirvType::NoRef(op_ty), _)) => {
                                             let op_id = self.ctxt.builder.alloc_id();
                                             self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&op_ty), op_id, op_ptr_id, None));
                                             self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
+                                        }
+                                        SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, SpirvType::Ref{ ty, referent, .. }, _)) => {
+                                            // Just pass the referent to the lvalue reference
+                                            let ref_id = if let Some(referent) = referent { referent } else { op_ptr_id };
+                                            if let Some(&mut SpirvType::Ref{ref mut referent, ..}) = self.ctxt.resolve_ref_lvalue(assign_lvalue) {
+                                                *referent = Some(ref_id);
+                                            } else {
+                                                self.ctxt.tcx.sess.span_err(stmt.source_info.span,
+                                                                   "inspirv: Unsupported rvalue reference!")
+                                            }
                                         }
                                         SpirvOperand::Consume(SpirvLvalue::SignatureStruct(ref interfaces, _)) => {
                                             let ids = interfaces.iter().map(|interface| {
