@@ -5,7 +5,7 @@ use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::{ConstInt, ConstFloat};
-use rustc::ty::{self, FnSig, TyCtxt, Ty, VariantKind};
+use rustc::ty::{self, TyCtxt, Ty, VariantKind};
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::util::common::time;
@@ -103,8 +103,8 @@ impl SpirvType {
     fn ty(&self) -> &Type {
         use self::SpirvType::*;
         match *self {
-            NoRef(ref ty) => ty,
-            Ref{ ref ty, .. } => ty,
+            NoRef(ref ty)
+            | Ref{ ref ty, .. } => ty,
         }
     }
 }
@@ -113,8 +113,8 @@ impl Into<Type> for SpirvType {
     fn into(self) -> Type {
         use self::SpirvType::*;
         match self {
-            NoRef(ty) => ty,
-            Ref{ ty, .. } => ty,
+            NoRef(ty)
+            | Ref{ ty, .. } => ty,
         }
     }
 }
@@ -331,11 +331,11 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
             // Extract all arguments and store their ids in a list for faster access later
             // Arguments as Input interface if the structs have to corresponding annotations
-            for (arg, ty) in self.mir.arg_decls.iter().zip(signature.inputs.iter()) {
+            for arg in self.mir.arg_decls.iter() {
                 let name = &*arg.debug_name.as_str();
                 if name.is_empty() {
                     self.arg_ids.push(None);
-                } else if let Some(ty_id) = ty.ty_to_def_id() {
+                } else if let Some(ty_id) = arg.ty.ty_to_def_id() {
                     let attrs = self.get_node_attributes(ty_id);
                     let interface = attrs.iter().any(|attr| match *attr {
                             Attribute::Interface => true,
@@ -347,7 +347,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         });
 
                     if interface {
-                        if let ty::TyAdt(adt, subs) = ty.sty {
+                        if let ty::TyAdt(adt, subs) = arg.ty.sty {
                             let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                 let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs));
                                 let node_id = self.get_node_id(ty_id);
@@ -394,23 +394,23 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
                             self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
                         } else {
-                            bug!("Input argument type requires to be struct type ({:?})", ty)
+                            bug!("Input argument type requires to be struct type ({:?})", arg.ty)
                         }
                     } else if const_buffer {
-                        if let ty::TyAdt(_adt, _subs) = ty.sty {
-                            let ty = self.rust_ty_to_spirv(ty);
+                        if let ty::TyAdt(_adt, _subs) = arg.ty.sty {
+                            let ty = self.rust_ty_to_spirv(arg.ty);
                             let id = self.builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
                             self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty)))));
                         } else {
-                            bug!("Const buffer argument type requires to be struct type ({:?})", ty)
+                            bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
                         }
                     } else if entry_point.is_some() {
                         // Entrypoint functions don't have actual input/output parameters
                         // We use them for the shader interface and const buffers
-                        bug!("Input argument type requires interface or const_buffer attribute({:?})", ty)
+                        bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
                     } else {
                         let id = self.builder.alloc_id();
-                        let ty = self.rust_ty_to_spirv_ref(ty);
+                        let ty = self.rust_ty_to_spirv_ref(arg.ty);
                         let arg = Argument {
                             id: id,
                             ty: ty.clone().into(),
@@ -420,11 +420,11 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
                     }
                 } else if entry_point.is_some() {
-                    bug!("Argument type not defined in local crate({:?})", ty)
+                    bug!("Argument type not defined in local crate({:?})", arg.ty)
                 } else {
                     //
                     let id = self.builder.alloc_id();
-                    let ty = self.rust_ty_to_spirv_ref(ty);
+                    let ty = self.rust_ty_to_spirv_ref(arg.ty);
                     let arg = Argument {
                         id: id,
                         ty: ty.clone().into(),
@@ -1073,11 +1073,11 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 }
             }
             // Translation only
-            StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
-            StatementKind::SetDiscriminant { .. } => println!("{:?}", stmt.kind),
-
+            StatementKind::StorageLive(_) | StatementKind::StorageDead(_)
             // Empty statements, nothing to do
-            StatementKind::Nop => {}
+            | StatementKind::Nop => {}
+
+            StatementKind::SetDiscriminant { .. } => println!("{:?}", stmt.kind),
         }
     }
 
