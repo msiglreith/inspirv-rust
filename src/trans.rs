@@ -5,12 +5,13 @@ use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::{ConstInt, ConstFloat};
-use rustc::ty::{self, TyCtxt, Ty, VariantKind};
+use rustc::ty::{self, FnSig, TyCtxt, Ty, VariantKind};
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::util::common::time;
 use rustc_borrowck as borrowck;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
+use rustc::ty::subst::Substs;
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use std::fs::File;
 use std::ops::Deref;
@@ -25,6 +26,7 @@ use inspirv_builder;
 use inspirv_builder::function::{Argument, LocalVar, Block, FuncId};
 use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueFloat};
 use attribute::{self, Attribute};
+use monomorphize;
 
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
@@ -131,14 +133,14 @@ impl Deref for SpirvType {
 pub type IdAndType = (Id, SpirvType);
 
 #[derive(Clone, Debug)]
-pub enum SpirvOperand {
+pub enum SpirvOperand<'tcx> {
     Consume(SpirvLvalue),
     Constant(Id, SpirvType),
-    FnCall(DefId),
+    FnCall(DefId, &'tcx Substs<'tcx>),
     None, // TODO: temp
 }
 
-impl SpirvOperand {
+impl<'tcx> SpirvOperand<'tcx> {
     pub fn is_constant(&self) -> bool {
         match *self {
             SpirvOperand::Constant(..) => true,
@@ -195,6 +197,7 @@ pub struct InspirvFnCtxt<'v, 'tcx: 'v> {
     pub builder: &'v mut ModuleBuilder,
 
     fn_ids: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), FuncId>,
+    substs: Option<&'v Substs<'tcx>>,
 
     arg_ids: IndexVec<Arg, Option<FuncArg>>,
     var_ids: IndexVec<Var, IdAndType>,
@@ -217,6 +220,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 node_id: id,
                 builder: &mut self.builder,
                 fn_ids: &mut self.fn_ids,
+                substs: None,
 
                 arg_ids: IndexVec::new(),
                 var_ids: IndexVec::new(),
@@ -225,10 +229,10 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             };
 
             match src {
-                MirSource::Const(id) => fn_ctxt.trans_const(),
-                MirSource::Fn(id) => fn_ctxt.trans_fn(),
-                MirSource::Static(id, mutability) => fn_ctxt.trans_static(mutability),
-                MirSource::Promoted(id, promoted) => {
+                MirSource::Const(_) => fn_ctxt.trans_const(),
+                MirSource::Fn(_) => fn_ctxt.trans_fn(),
+                MirSource::Static(_, mutability) => fn_ctxt.trans_static(mutability),
+                MirSource::Promoted(_, promoted) => {
                     println!("{:?}", (id, promoted, mir));
                 }
             }
@@ -282,15 +286,24 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
     fn trans_fn(&mut self) {
         let did = self.tcx.map.local_def_id(self.node_id);
+
         let type_scheme = self.tcx.lookup_item_type(did);
 
         // Don't translate generic functions!
-        if !type_scheme.generics.types.is_empty() {
+        if self.substs.is_none() && !type_scheme.generics.types.is_empty() {
             return;
         }
+        
+        let signature = {
+            let sig = type_scheme.ty.fn_sig().skip_binder();
+            if let Some(substs) = self.substs {
+                monomorphize::apply_param_substs(self.tcx, self.substs.unwrap(), sig)
+            } else {
+                sig.clone()
+            }
+        };
 
         // Check if already translate (e.g. instance of a generic)
-        let signature = type_scheme.ty.fn_sig().skip_binder();
         if self.fn_ids.contains_key(&(did, signature.clone())) {
             return;
         }
@@ -318,11 +331,11 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
             // Extract all arguments and store their ids in a list for faster access later
             // Arguments as Input interface if the structs have to corresponding annotations
-            for arg in self.mir.arg_decls.iter() {
+            for (arg, ty) in self.mir.arg_decls.iter().zip(signature.inputs.iter()) {
                 let name = &*arg.debug_name.as_str();
                 if name.is_empty() {
                     self.arg_ids.push(None);
-                } else if let Some(ty_id) = arg.ty.ty_to_def_id() {
+                } else if let Some(ty_id) = ty.ty_to_def_id() {
                     let attrs = self.get_node_attributes(ty_id);
                     let interface = attrs.iter().any(|attr| match *attr {
                             Attribute::Interface => true,
@@ -334,7 +347,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         });
 
                     if interface {
-                        if let ty::TyAdt(adt, subs) = arg.ty.sty {
+                        if let ty::TyAdt(adt, subs) = ty.sty {
                             let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                 let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs));
                                 let node_id = self.get_node_id(ty_id);
@@ -381,23 +394,23 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
                             self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
                         } else {
-                            bug!("Input argument type requires to be struct type ({:?})", arg.ty)
+                            bug!("Input argument type requires to be struct type ({:?})", ty)
                         }
                     } else if const_buffer {
-                        if let ty::TyAdt(_adt, _subs) = arg.ty.sty {
-                            let ty = self.rust_ty_to_spirv(arg.ty);
+                        if let ty::TyAdt(_adt, _subs) = ty.sty {
+                            let ty = self.rust_ty_to_spirv(ty);
                             let id = self.builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
                             self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty)))));
                         } else {
-                            bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
+                            bug!("Const buffer argument type requires to be struct type ({:?})", ty)
                         }
                     } else if entry_point.is_some() {
                         // Entrypoint functions don't have actual input/output parameters
                         // We use them for the shader interface and const buffers
-                        bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
+                        bug!("Input argument type requires interface or const_buffer attribute({:?})", ty)
                     } else {
                         let id = self.builder.alloc_id();
-                        let ty = self.rust_ty_to_spirv_ref(arg.ty);
+                        let ty = self.rust_ty_to_spirv_ref(ty);
                         let arg = Argument {
                             id: id,
                             ty: ty.clone().into(),
@@ -407,11 +420,11 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
                     }
                 } else if entry_point.is_some() {
-                    bug!("Argument type not defined in local crate({:?})", arg.ty)
+                    bug!("Argument type not defined in local crate({:?})", ty)
                 } else {
                     //
                     let id = self.builder.alloc_id();
-                    let ty = self.rust_ty_to_spirv_ref(arg.ty);
+                    let ty = self.rust_ty_to_spirv_ref(ty);
                     let arg = Argument {
                         id: id,
                         ty: ty.clone().into(),
@@ -841,6 +854,12 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 }
             }
 
+            ty::TyParam(param) => {
+                let ty = param.to_ty(*self.tcx);
+                let ty = monomorphize::apply_ty_substs(self.tcx, self.substs.unwrap(), ty);
+                self.rust_ty_to_spirv_ref(ty)
+            }
+
             _ => { println!("{:?}", t.sty); unimplemented!() },
         }
     }
@@ -1082,11 +1101,11 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             }
 
             Unreachable => {
-                self.block.branch_instr =
-                    Some(BranchInstruction::Unreachable(OpUnreachable));
+                self.block.branch_instr = Some(BranchInstruction::Unreachable(OpUnreachable));
             }
 
             If { ref cond, targets: (branch_true, branch_false) } => {
+                unimplemented!();
                 let cond = self.trans_operand(cond);
                 match cond {
                     SpirvOperand::Consume(lvalue) => {
@@ -1103,14 +1122,14 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
             // &Switch { discr, adt_def, targets } => { },
             // &SwitchInt { discr, switch_ty, values, targets } => { },
-            // &Resume => { },
-            // &Drop { location, target, unwind } => { },
+            Resume => self.block.branch_instr = Some(BranchInstruction::Return(OpReturn)),
+            Drop { target, .. } => self.block.branch_instr = Some(BranchInstruction::Branch(OpBranch(self.labels[target]))),
             // &DropAndReplace { location, value, target, unwind } => { },
 
             Call { ref func, ref args, ref destination, .. } => {
                 let func_op = self.trans_operand(func);
                 match func_op {
-                    SpirvOperand::FnCall(def_id) => {
+                    SpirvOperand::FnCall(def_id, substs) => {
                         let attrs = self.ctxt.get_node_attributes(def_id);
 
                         let intrinsic = attrs.iter().find(|attr| match **attr {
@@ -1123,7 +1142,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                         // Translate function call
                         let id = if let Some(&Attribute::Intrinsic(intrinsic)) = intrinsic {
-                            Some(self.emit_intrinsic(intrinsic, args))
+                            self.emit_intrinsic(intrinsic, args)
                         } else {
                             // 'normal' function call
                             let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<Vec<_>>();
@@ -1139,16 +1158,51 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                                         _ => None
                                                     }).collect::<Vec<_>>();
 
-                            println!("{:?}", (def_id, args_ops));
-                            
-                            // self.block.emit_instruction(OpFunctionCall());
-                            None
+                            let fn_ty = self.ctxt.tcx.lookup_item_type(def_id).ty;
+                            let signature = fn_ty.fn_sig().skip_binder();
+                            let signature = monomorphize::apply_param_substs(self.ctxt.tcx, substs, signature);
+
+                            if !self.ctxt.fn_ids.contains_key(&(def_id, signature.clone())) {
+                                let mut fn_ctxt = InspirvFnCtxt {
+                                    tcx: self.ctxt.tcx,
+                                    mir_map: self.ctxt.mir_map,
+                                    mir: &self.ctxt.mir_map.map[&def_id],
+                                    node_id: self.ctxt.get_node_id(def_id),
+                                    builder: self.ctxt.builder,
+                                    fn_ids: self.ctxt.fn_ids,
+                                    substs: Some(substs),
+
+                                    arg_ids: IndexVec::new(),
+                                    var_ids: IndexVec::new(),
+                                    temp_ids: IndexVec::new(),
+                                    return_ids: None,
+                                };
+
+                                fn_ctxt.trans_fn();
+                            }
+
+                            let fn_id = self.ctxt.fn_ids[&(def_id, signature)];
+                            let result_id = self.ctxt.builder.alloc_id();
+                            let result_type = {
+                                let ret_ty = self.ctxt.builder.get_function(fn_id).unwrap().ret_ty.clone();
+                                self.ctxt.builder.define_type(&ret_ty)
+                            };
+
+                            self.block.emit_instruction(
+                                OpFunctionCall(
+                                    result_type,
+                                    result_id,
+                                    fn_id.0,
+                                    component_ids
+                                )
+                            );
+                            result_id
                         };
 
                         // Store return value into lvalue destination
                         match lvalue {
                             SpirvLvalue::Variable(lvalue_id, _, _) | SpirvLvalue::Return((lvalue_id, _)) => {
-                                self.block.emit_instruction(OpStore(lvalue_id, id.unwrap(), None));
+                                self.block.emit_instruction(OpStore(lvalue_id, id, None));
                             },
 
                             SpirvLvalue::Ignore => (),
@@ -1174,7 +1228,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    pub fn trans_operand(&mut self, operand: &Operand<'tcx>) -> SpirvOperand {
+    pub fn trans_operand(&mut self, operand: &Operand<'tcx>) -> SpirvOperand<'tcx> {
         use rustc::mir::repr::Operand::*;
         match *operand {
             Consume(ref lvalue) => {
@@ -1190,8 +1244,8 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
             Constant(ref c) => {
                 match c.literal {
-                    Literal::Item { def_id, .. } => {
-                        SpirvOperand::FnCall(def_id)
+                    Literal::Item { def_id, substs } => {
+                        SpirvOperand::FnCall(def_id, substs)
                     }
                     Literal::Value { ref value } => {
                         let (constant, ty) = match *value {
