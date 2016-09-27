@@ -124,8 +124,8 @@ impl Deref for SpirvType {
     fn deref(&self) -> &Self::Target {
         use self::SpirvType::*;
         match *self {
-            NoRef(ref ty) => ty,
-            Ref{ ref ty, .. } => ty,
+            NoRef(ref ty)
+            | Ref{ ref ty, .. } => ty,
         }
     }
 }
@@ -265,7 +265,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         if return_ty.is_ref() {
             bug!("References as return type are currently unsupported ({:?})", self.mir.return_ty)
         }
-        self.return_ids = if let &Type::Void = return_ty.ty() {
+        self.return_ids = if let Type::Void = *return_ty.ty() {
             None
         } else {
             let id = self.builder.alloc_id();
@@ -297,7 +297,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         let signature = {
             let sig = type_scheme.ty.fn_sig().skip_binder();
             if let Some(substs) = self.substs {
-                monomorphize::apply_param_substs(self.tcx, self.substs.unwrap(), sig)
+                monomorphize::apply_param_substs(self.tcx, substs, sig)
             } else {
                 sig.clone()
             }
@@ -309,7 +309,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         }
 
         self.arg_ids = IndexVec::new();
-        let mut fn_module = {
+        let fn_module = {
             let attrs = attribute::parse(self.tcx.sess, self.tcx.map.attrs(self.node_id));
 
             // We don't translate builtin functions, these will be handled internally
@@ -532,7 +532,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 if return_ty.is_ref() {
                     bug!("References as return type are currently unsupported ({:?})", self.mir.return_ty)
                 }
-                self.return_ids = if let &Type::Void = return_ty.ty() {
+                self.return_ids = if let Type::Void = *return_ty.ty() {
                     None
                 } else {
                     let id = self.builder.alloc_id();
@@ -671,7 +671,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                             chain.push(field_id);
                             Some(SpirvLvalue::AccessChain(id, storage_class, chain, self.rust_ty_to_spirv(ty)))
                         }
-                        (&ProjectionElem::Deref, &SpirvLvalue::Variable(id, Ref {ref ty, referent: Some(refer), ..}, storage_class)) => {
+                        (&ProjectionElem::Deref, &SpirvLvalue::Variable(_id, Ref {ref ty, referent: Some(refer), ..}, storage_class)) => {
                             Some(SpirvLvalue::Variable(refer, SpirvType::NoRef(ty.clone()), storage_class))
                         }
                         _ => {
@@ -817,7 +817,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     NoRef(Type::Struct(adt.struct_variant().fields.iter().map(|field| self.rust_ty_to_spirv(field.ty(*self.tcx, subs))).collect()))
                 }    
             }
-            ty::TyAdt(adt, subs) if adt.is_enum() => {
+            ty::TyAdt(adt, _subs) if adt.is_enum() => {
                 use rustc_const_math::ConstInt::*;
                 use rustc_const_math::ConstIsize::*;
 
@@ -834,9 +834,9 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 let disr = adt.variants[0].disr_val;
                 let (bit_width, signed) = match disr {
                     I16(_) => (16, true),
-                    I32(_) => (32, true),
-                    I64(_) => (64, true),
+                    I32(_) |
                     Isize(Is32(_)) => (32, true),
+                    I64(_) => (64, true),
                     U16(_) => (16, false),
                     U32(_) => (32, false),
                     U64(_) => (64, false),
@@ -894,7 +894,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                             self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&op_ty), op_id, op_ptr_id, None));
                                             self.block.emit_instruction(OpStore(lvalue_id, op_id, None));
                                         }
-                                        SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, SpirvType::Ref{ ty, referent, .. }, _)) => {
+                                        SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, SpirvType::Ref{ referent, .. }, _)) => {
                                             // Just pass the referent to the lvalue reference
                                             let ref_id = if let Some(referent) = referent { referent } else { op_ptr_id };
                                             if let Some(&mut SpirvType::Ref{ref mut referent, ..}) = self.ctxt.resolve_ref_lvalue(assign_lvalue) {
@@ -1018,9 +1018,9 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                                             let constant = match disr {
                                                 I16(v) => module::Constant::Scalar(ConstValue::I16(v)),
-                                                I32(v) => module::Constant::Scalar(ConstValue::I32(v)),
-                                                I64(v) => module::Constant::Scalar(ConstValue::I64(v)),
+                                                I32(v) |
                                                 Isize(Is32(v)) => module::Constant::Scalar(ConstValue::I32(v)),
+                                                I64(v) => module::Constant::Scalar(ConstValue::I64(v)),
                                                 U16(v) => module::Constant::Scalar(ConstValue::U16(v)),
                                                 U32(v) => module::Constant::Scalar(ConstValue::U32(v)),
                                                 U64(v) => module::Constant::Scalar(ConstValue::U64(v)),
@@ -1094,10 +1094,6 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
     fn trans_terminator(&mut self, ret_ty: &Type, terminator: &Terminator<'tcx>) {
         use rustc::mir::repr::TerminatorKind::*;
         match terminator.kind {
-            Goto { ref target } => {
-                self.block.branch_instr = Some(BranchInstruction::Branch(OpBranch(self.labels[*target])));
-            }
-
             Return => {
                 match (ret_ty, &self.ctxt.return_ids) {
                     (&Type::Void, _) | (_, &None) => {
@@ -1114,20 +1110,20 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 self.block.branch_instr = Some(BranchInstruction::Unreachable(OpUnreachable));
             }
 
-            If { ref cond, targets: (branch_true, branch_false) } => {
-                unimplemented!();
+            If { ref cond, targets: (_branch_true, _branch_false) } => {
                 let cond = self.trans_operand(cond);
                 match cond {
-                    SpirvOperand::Consume(lvalue) => {
+                    SpirvOperand::Consume(_lvalue) => {
 
                     },
 
-                    SpirvOperand::Constant(id, _) => {
+                    SpirvOperand::Constant(_id, _) => {
 
                     },
 
                     _ => self.ctxt.tcx.sess.span_err(terminator.source_info.span, "inspirv: Unhandled if condition operand."),
                 }
+                unimplemented!();
             }
 
             // &Switch { discr, adt_def, targets } => { },
@@ -1151,7 +1147,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                         let lvalue = self.ctxt.resolve_lvalue(&lvalue).map(|lvalue| self.ctxt.transform_lvalue(self.block, lvalue)).expect("Unhandled lvalue");
 
                         // Translate function call
-                        let id = if let Some(&Attribute::Intrinsic(intrinsic)) = intrinsic {
+                        let id = if let Some(&Attribute::Intrinsic(ref intrinsic)) = intrinsic {
                             self.emit_intrinsic(intrinsic, args)
                         } else {
                             // 'normal' function call
@@ -1228,7 +1224,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             },
             //
 
-            Assert { ref target, .. } => {
+            Goto { ref target } | Assert { ref target, .. } => {
                 // Ignore the actual asset
                 // TODO: correct behaviour? some conditions?
                 self.block.branch_instr = Some(BranchInstruction::Branch(OpBranch(self.labels[*target])));

@@ -341,22 +341,20 @@ pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attr
                                                                     }
                                                                 }
                                                                 "vector_new" => {
-                                                                    let mut components = None;
+                                                                    let mut components = Vec::new();
                                                                     for item in items {
                                                                         match item.node {
                                                                             NestedMetaItemKind::Literal(ref literal) => {
                                                                                 match literal.node {
-                                                                                    syntax::ast::LitKind::Int(b, _) if b >= 2 => components = Some(b as u32),
-                                                                                    _ => panic!("attribute value needs to be interger (>2)"),
+                                                                                    syntax::ast::LitKind::Int(b, _) => components.push(b as u32),
+                                                                                    _ => panic!("attribute value needs to be interger"),
                                                                                 }
                                                                             }
                                                                             _ => sess.span_err(item.span, "Unknown `inspirv` vector_new intrinsic attribute item"),
                                                                         }
                                                                     }
-                                                                    if let Some(components) = components {
-                                                                        let intrinsic = Intrinsic::VectorNew {
-                                                                            components: components,
-                                                                        };
+                                                                    if !components.is_empty() {
+                                                                        let intrinsic = Intrinsic::VectorNew(components);
                                                                         attrs.push(Attribute::Intrinsic(intrinsic));
                                                                     } else {
                                                                         sess.span_err(item.span, "`inspirv` vector_new misses components attributes");

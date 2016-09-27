@@ -16,6 +16,11 @@ pub struct Float3 {
 }
 impl Copy for Float3 {}
 
+impl Float3 {
+    #[inspirv(intrinsic(vector_new(1, 1, 1)))]
+    pub fn new(_x: f32, _y: f32, _z: f32) -> Float3 { loop {} }
+}
+
 #[inspirv(vector(base = "f32", components = 4))]
 pub struct Float4 {
     pub x: f32,
@@ -26,8 +31,14 @@ pub struct Float4 {
 impl Copy for Float4 {}
 
 impl Float4 {
-    #[inspirv(intrinsic(vector_new(4)))]
+    #[inspirv(intrinsic(vector_new(1, 1, 1, 1)))]
     pub fn new(_x: f32, _y: f32, _z: f32, _w: f32) -> Float4 { loop {} }
+
+    #[inspirv(intrinsic(vector_new(3, 1)))]
+    pub fn from_3_1(_xyz: Float3, _w: f32) -> Float4 { loop {} }
+
+    #[inspirv(intrinsic(vector_new(2, 2)))]
+    pub fn from_2_2(_xy: Float2, _zw: Float2) -> Float4 { loop {} }
 
     #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 2)))]
     pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }

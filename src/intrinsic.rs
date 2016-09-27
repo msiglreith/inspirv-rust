@@ -7,7 +7,7 @@ use inspirv::types::*;
 use inspirv::core::instruction::*;
 use inspirv_builder::module::{self, Type};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Intrinsic {
     Swizzle {
         components_out: u32,
@@ -18,11 +18,11 @@ pub enum Intrinsic {
         components_in0: u32,
         components_in1: u32
     },
-    VectorNew { components: u32 },
+    VectorNew(Vec<u32>),
 }
 
 impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
-    pub fn emit_intrinsic(&mut self, intrinsic: Intrinsic, args: &[Operand<'tcx>]) -> Id {
+    pub fn emit_intrinsic(&mut self, intrinsic: &Intrinsic, args: &[Operand<'tcx>]) -> Id {
         use self::Intrinsic::*;
         let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<Vec<_>>();
         let component_ids = args_ops.iter().filter_map(
@@ -37,8 +37,8 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                     _ => None
                                 }).collect::<Vec<_>>();
 
-        match intrinsic {
-            VectorNew { components } => self.emit_intrinsic_vector_new(components, args_ops, component_ids),
+        match *intrinsic {
+            VectorNew(ref components) => self.emit_intrinsic_vector_new(components, args_ops, component_ids),
             Swizzle { components_out, components_in } => self.emit_instrinsic_swizzle(
                                                                     components_in,
                                                                     components_out,
@@ -114,17 +114,53 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    fn emit_intrinsic_vector_new(&mut self, num_components: u32, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
-        assert!(num_components as usize == component_ids.len());
-        let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: num_components as u32 };
-        if args.iter().all(|arg| arg.is_constant()) {
-            // all args are constants!
+    fn emit_intrinsic_vector_new(&mut self, num_components: &[u32], args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        assert!(num_components.len() == component_ids.len());
+        let out_components = num_components.iter().fold(0, |acc, &x| acc + x);
+        let base_ty = Type::Float(32);
+        let ty = Type::Vector{ base: Box::new(base_ty.clone()), components: out_components };
+        if args.iter().all(|arg| arg.is_constant()) && num_components.iter().all(|num| *num == 1) {
+            // all args are scalar constants!
             let constant = module::Constant::Composite(ty, component_ids);
             self.ctxt.builder.define_constant(constant)
         } else {
+            let scalar_ids = {
+                num_components
+                    .iter()
+                    .zip(component_ids.iter())
+                    .flat_map(|(num, id)| {
+                        if *num > 1 {
+                            let composite_ty = Type::Vector{ base: Box::new(base_ty.clone()), components: *num };
+                            let composite_id = self.ctxt.builder.alloc_id();
+                            self.block.emit_instruction(
+                                OpLoad(
+                                    self.ctxt.builder.define_type(&composite_ty),
+                                    composite_id,
+                                    *id,
+                                    None,
+                                )
+                            );
+                            (0..*num).map(|i| {
+                                let scalar_id = self.ctxt.builder.alloc_id();
+                                self.block.emit_instruction(
+                                    OpCompositeExtract(
+                                        self.ctxt.builder.define_type(&base_ty),
+                                        scalar_id,
+                                        composite_id,
+                                        vec![LiteralInteger(i)],
+                                    )
+                                );
+                                scalar_id
+                            }).collect::<Vec<Id>>().into_iter()
+                        } else {
+                            vec![*id].into_iter()
+                        }
+                    }).collect::<Vec<Id>>()
+            };
+
             let composite_id = self.ctxt.builder.alloc_id();
             self.block.emit_instruction(
-                OpCompositeConstruct(self.ctxt.builder.define_type(&ty), composite_id, component_ids)
+                OpCompositeConstruct(self.ctxt.builder.define_type(&ty), composite_id, scalar_ids)
             );
             composite_id
         }
