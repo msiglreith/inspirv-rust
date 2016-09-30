@@ -83,13 +83,13 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     panic!("Unhandled dynamic `shuffle4`")
                 }
             }
+
+            Mul => self.emit_mul(args_ops, component_ids),
             Transpose => self.emit_transpose(args_ops, component_ids),
             Inverse => self.emit_inverse(args_ops, component_ids),
             _ => bug!("Unknown function call intrinsic")
         }
     }
-
-    
 
     fn emit_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
         assert!(num_output_components as usize == component_ids.len());
@@ -170,6 +170,50 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             );
             composite_id
         }
+    }
+
+    // Multiplication for non-standard types (matrix and vector)
+    fn emit_mul(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        use trans::SpirvOperand::*;
+        use trans::SpirvLvalue::*;
+        use trans::SpirvType::*;
+
+        let left_ty = {
+            match args[0] {
+                Consume(Variable(_, NoRef(ref ty), _)) |
+                Constant(_, NoRef(ref ty)) => ty,
+                _ => bug!("Unexpected transpose argument {:?}", args[0]),
+            }
+        };
+
+        let right_ty = {
+            match args[1] {
+                Consume(Variable(_, NoRef(ref ty), _)) |
+                Constant(_, NoRef(ref ty)) => ty,
+                _ => bug!("Unexpected transpose argument {:?}", args[1]),
+            }
+        };
+
+        let result_id = self.ctxt.builder.alloc_id();
+
+        match (left_ty, right_ty) {
+            (&Type::Matrix { base: ref lbase, rows: lrows, cols: lcols },
+             &Type::Matrix { base: ref rbase, rows: rrows, cols: rcols }) if lbase == rbase && lcols == rrows => {
+                let result_ty = Type::Matrix { base: lbase.clone(), rows: lrows, cols: rcols };
+                self.block.emit_instruction(
+                    OpMatrixTimesMatrix(self.ctxt.builder.define_type(&result_ty), result_id, component_ids[0], component_ids[1])
+                );
+            }
+
+            (&Type::Matrix { base: ref lbase, rows, cols },
+             &Type::Vector { base: ref rbase, components }) if lbase == rbase && cols == components => {
+                let result_ty = Type::Vector { base: rbase.clone(), components: rows };
+            }
+
+            _ => {}
+        }
+        
+        result_id
     }
 
     fn emit_transpose(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {

@@ -27,6 +27,7 @@ use inspirv_builder::function::{Argument, LocalVar, Block, FuncId};
 use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueFloat};
 use attribute::{self, Attribute};
 use monomorphize;
+use traits;
 
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
@@ -193,6 +194,7 @@ pub struct InspirvFnCtxt<'v, 'tcx: 'v> {
     tcx: &'v TyCtxt<'v, 'tcx, 'tcx>,
     mir_map: &'v MirMap<'tcx>,
     mir: &'v Mir<'tcx>,
+    def_id: DefId,
     node_id: NodeId,
     pub builder: &'v mut ModuleBuilder,
 
@@ -217,6 +219,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 tcx: self.tcx,
                 mir_map: self.mir_map,
                 mir: mir,
+                def_id: def_id,
                 node_id: id,
                 builder: &mut self.builder,
                 fn_ids: &mut self.fn_ids,
@@ -285,7 +288,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     }
 
     fn trans_fn(&mut self) {
-        let did = self.tcx.map.local_def_id(self.node_id);
+        let did = self.def_id;
 
         let type_scheme = self.tcx.lookup_item_type(did);
 
@@ -550,7 +553,6 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         };
 
         println!("{:?}", (self.node_id, self.tcx.map.name(self.node_id).as_str(), self.mir));
-
         self.fn_ids.insert((did, signature.clone()), fn_module.id);
         self.trans(fn_module);
     }
@@ -1135,7 +1137,22 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             Call { ref func, ref args, ref destination, .. } => {
                 let func_op = self.trans_operand(func);
                 match func_op {
-                    SpirvOperand::FnCall(def_id, substs) => {
+                    SpirvOperand::FnCall(mut def_id, substs) => {
+                        let fn_ty = self.ctxt.tcx.lookup_item_type(def_id).ty;
+                        let signature = fn_ty.fn_sig().skip_binder();
+
+                        let (substs, signature) = if self.ctxt.tcx.trait_of_item(def_id).is_some() {
+                            let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.ctxt.tcx, def_id, substs);
+                            let ty = self.ctxt.tcx.lookup_item_type(resolved_def_id).ty;
+                            // TODO: investigate rustc trans use of liberate_bound_regions or similar here
+                            let signature = ty.fn_sig().skip_binder();
+
+                            def_id = resolved_def_id;
+                            (resolved_substs, signature)
+                        } else {
+                            (substs, signature)
+                        };
+
                         let attrs = self.ctxt.get_node_attributes(def_id);
 
                         let intrinsic = attrs.iter().find(|attr| match **attr {
@@ -1164,8 +1181,6 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                                         _ => None
                                                     }).collect::<Vec<_>>();
 
-                            let fn_ty = self.ctxt.tcx.lookup_item_type(def_id).ty;
-                            let signature = fn_ty.fn_sig().skip_binder();
                             let signature = monomorphize::apply_param_substs(self.ctxt.tcx, substs, signature);
 
                             if !self.ctxt.fn_ids.contains_key(&(def_id, signature.clone())) {
@@ -1173,6 +1188,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                     tcx: self.ctxt.tcx,
                                     mir_map: self.ctxt.mir_map,
                                     mir: &self.ctxt.mir_map.map[&def_id],
+                                    def_id: def_id,
                                     node_id: self.ctxt.get_node_id(def_id),
                                     builder: self.ctxt.builder,
                                     fn_ids: self.ctxt.fn_ids,
