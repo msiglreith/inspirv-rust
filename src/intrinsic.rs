@@ -6,6 +6,7 @@ use trans::{InspirvBlock, SpirvOperand, SpirvLvalue};
 use inspirv::types::*;
 use inspirv::core::instruction::*;
 use inspirv_builder::module::{self, Type};
+use inspirv::glsl::instruction as glsl;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Intrinsic {
@@ -21,6 +22,7 @@ pub enum Intrinsic {
     VectorNew(Vec<u32>),
     Mul,
     Transpose,
+    Inverse,
 }
 
 impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
@@ -82,6 +84,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 }
             }
             Transpose => self.emit_transpose(args_ops, component_ids),
+            Inverse => self.emit_inverse(args_ops, component_ids),
             _ => bug!("Unknown function call intrinsic")
         }
     }
@@ -186,6 +189,25 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         self.block.emit_instruction(
             OpTranspose(self.ctxt.builder.define_type(&result_ty), result_id, component_ids[0])
         );
+        result_id
+    }
+
+    fn emit_inverse(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        // expect a matrix type
+        let result_ty = {
+            use trans::SpirvOperand::*;
+            use trans::SpirvLvalue::*;
+            use trans::SpirvType::*;
+            match args[0] {
+                Consume(Variable(_, Ref{ ty: Type::Matrix { ref base, rows, cols }, .. }, _)) |
+                Constant(_, Ref{ ty: Type::Matrix { ref base, rows, cols }, .. }) if rows == cols => Type::Matrix { base: base.clone(), rows: rows, cols: cols },
+                _ => bug!("Unexpected inverse argument {:?}", args[0]),
+            }
+        };
+
+        let result_id = self.ctxt.builder.alloc_id();
+        let ext_glsl = self.ctxt.builder.import_extension("GLSL.std.450");
+        self.block.emit_glsl_instruction(ext_glsl, glsl::OpCode::MatrixInverse, result_id, self.ctxt.builder.define_type(&result_ty), vec![component_ids[0]]);
         result_id
     }
 }

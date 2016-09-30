@@ -11,6 +11,9 @@ impl Copy for Float4x4 {}
 impl Float4x4 {
     #[inspirv(intrinsic(transpose))]
     pub fn transpose(&self) -> Float4x4 { loop {} }
+
+    #[inspirv(intrinsic(inverse))]
+    pub fn inverse(&self) -> Float4x4 { loop {} }
 }
 
 impl Mul<f32> for Float4x4 {

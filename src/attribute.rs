@@ -374,6 +374,7 @@ pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attr
                                                     match &**name {
                                                         "mul" => { attrs.push(Attribute::Intrinsic(Intrinsic::Mul)); }
                                                         "transpose" => { attrs.push(Attribute::Intrinsic(Intrinsic::Transpose)); }
+                                                        "inverse" => { attrs.push(Attribute::Intrinsic(Intrinsic::Inverse)); }
                                                         _ => sess.span_err(item.span, "Unknown `inspirv` intrinsic"),
                                                     }
                                                 }
