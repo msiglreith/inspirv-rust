@@ -92,7 +92,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
     }
 
     fn emit_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
-        assert!(num_output_components as usize == component_ids.len());
+        assert!(num_output_components as usize + 1 == component_ids.len());
         let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: num_output_components as u32 };
         if args_ops[1..].iter().all(|arg| arg.is_constant()) {
             // all args are constants!
@@ -136,23 +136,13 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     .zip(component_ids.iter())
                     .flat_map(|(num, id)| {
                         if *num > 1 {
-                            let composite_ty = Type::Vector{ base: Box::new(base_ty.clone()), components: *num };
-                            let composite_id = self.ctxt.builder.alloc_id();
-                            self.block.emit_instruction(
-                                OpLoad(
-                                    self.ctxt.builder.define_type(&composite_ty),
-                                    composite_id,
-                                    *id,
-                                    None,
-                                )
-                            );
                             (0..*num).map(|i| {
                                 let scalar_id = self.ctxt.builder.alloc_id();
                                 self.block.emit_instruction(
                                     OpCompositeExtract(
                                         self.ctxt.builder.define_type(&base_ty),
                                         scalar_id,
-                                        composite_id,
+                                        *id,
                                         vec![LiteralInteger(i)],
                                     )
                                 );
@@ -208,9 +198,12 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             (&Type::Matrix { base: ref lbase, rows, cols },
              &Type::Vector { base: ref rbase, components }) if lbase == rbase && cols == components => {
                 let result_ty = Type::Vector { base: rbase.clone(), components: rows };
+                self.block.emit_instruction(
+                    OpMatrixTimesVector(self.ctxt.builder.define_type(&result_ty), result_id, component_ids[0], component_ids[1])
+                );
             }
 
-            _ => {}
+            _ => { bug!("{:?}", (left_ty, right_ty)); }
         }
         
         result_id

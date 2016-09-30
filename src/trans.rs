@@ -402,8 +402,21 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     } else if const_buffer {
                         if let ty::TyAdt(_adt, _subs) = arg.ty.sty {
                             let ty = self.rust_ty_to_spirv(arg.ty);
+                            let node_id = self.get_node_id(ty_id);
+                            let _ = self.builder.define_named_type(&ty, &*self.tcx.map.name(node_id).as_str());
                             let id = self.builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
                             self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty)))));
+
+                            for attr in attrs {
+                                match attr {
+                                    Attribute::Descriptor { set, binding } => {
+                                        self.builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
+                                        self.builder.add_decoration(id, Decoration::DecorationBinding(LiteralInteger(binding as u32)));
+                                    }
+                                    _ => ()
+                                }
+                            }
+
                         } else {
                             bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
                         }
