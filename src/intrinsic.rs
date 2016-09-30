@@ -19,6 +19,8 @@ pub enum Intrinsic {
         components_in1: u32
     },
     VectorNew(Vec<u32>),
+    Mul,
+    Transpose,
 }
 
 impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
@@ -38,8 +40,8 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                 }).collect::<Vec<_>>();
 
         match *intrinsic {
-            VectorNew(ref components) => self.emit_intrinsic_vector_new(components, args_ops, component_ids),
-            Swizzle { components_out, components_in } => self.emit_instrinsic_swizzle(
+            VectorNew(ref components) => self.emit_vector_new(components, args_ops, component_ids),
+            Swizzle { components_out, components_in } => self.emit_swizzle(
                                                                     components_in,
                                                                     components_out,
                                                                     args,
@@ -79,13 +81,14 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     panic!("Unhandled dynamic `shuffle4`")
                 }
             }
+            Transpose => self.emit_transpose(args_ops, component_ids),
             _ => bug!("Unknown function call intrinsic")
         }
     }
 
     
 
-    fn emit_instrinsic_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
         assert!(num_output_components as usize == component_ids.len());
         let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: num_output_components as u32 };
         if args_ops[1..].iter().all(|arg| arg.is_constant()) {
@@ -114,7 +117,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    fn emit_intrinsic_vector_new(&mut self, num_components: &[u32], args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_vector_new(&mut self, num_components: &[u32], args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
         assert!(num_components.len() == component_ids.len());
         let out_components = num_components.iter().fold(0, |acc, &x| acc + x);
         let base_ty = Type::Float(32);
@@ -165,6 +168,26 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             composite_id
         }
     }
+
+    fn emit_transpose(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        // expect a matrix type
+        let result_ty = {
+            use trans::SpirvOperand::*;
+            use trans::SpirvLvalue::*;
+            use trans::SpirvType::*;
+            match args[0] {
+                Consume(Variable(_, Ref{ ty: Type::Matrix { ref base, rows, cols }, .. }, _)) |
+                Constant(_, Ref{ ty: Type::Matrix { ref base, rows, cols }, .. }) => Type::Matrix { base: base.clone(), rows: cols, cols: rows },
+                _ => bug!("Unexpected transpose argument {:?}", args[0]),
+            }
+        };
+
+        let result_id = self.ctxt.builder.alloc_id();
+        self.block.emit_instruction(
+            OpTranspose(self.ctxt.builder.define_type(&result_ty), result_id, component_ids[0])
+        );
+        result_id
+    }
 }
 
 fn extract_u32_from_operand(operand: &Operand) -> u32 {
@@ -172,7 +195,7 @@ fn extract_u32_from_operand(operand: &Operand) -> u32 {
             Operand::Constant(ref c) => {
                 match c.literal {
                     Literal::Value { value: Integral(ConstInt::U32(v)) } => v,
-                    _ => bug!("Expected u32 constant `{:?}", operand)
+                    _ => bug!("Expected u32 constant {:?}", operand)
                 }
             }
             _ => bug!("Expected constant operand `{:?}`", operand)

@@ -8,6 +8,11 @@ pub struct Float2 {
 }
 impl Copy for Float2 {}
 
+impl Float2 {
+    #[inspirv(intrinsic(vector_new(1, 1)))]
+    pub fn new(_x: f32, _y: f32) -> Float3 { loop {} }
+}
+
 #[inspirv(vector(base = "f32", components = 3))]
 pub struct Float3 {
     pub x: f32,
@@ -19,6 +24,21 @@ impl Copy for Float3 {}
 impl Float3 {
     #[inspirv(intrinsic(vector_new(1, 1, 1)))]
     pub fn new(_x: f32, _y: f32, _z: f32) -> Float3 { loop {} }
+
+    #[inspirv(intrinsic(vector_new(1, 2)))]
+    pub fn from_1_2(_x: f32, _yz: Float2) -> Float3 { loop {} }
+
+    #[inspirv(intrinsic(vector_new(2, 1)))]
+    pub fn from_2_1(_xy: Float2, _z: f32) -> Float3 { loop {} }
+
+    #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 2)))]
+    pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
+
+    #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 3)))]
+    pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Float3 { loop {} }
+
+    #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 4)))]
+    pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Float4 { loop {} }
 }
 
 #[inspirv(vector(base = "f32", components = 4))]
@@ -34,11 +54,21 @@ impl Float4 {
     #[inspirv(intrinsic(vector_new(1, 1, 1, 1)))]
     pub fn new(_x: f32, _y: f32, _z: f32, _w: f32) -> Float4 { loop {} }
 
-    #[inspirv(intrinsic(vector_new(3, 1)))]
-    pub fn from_3_1(_xyz: Float3, _w: f32) -> Float4 { loop {} }
+    #[inspirv(intrinsic(vector_new(1, 1, 2)))]
+    pub fn from_1_1_2(_x: f32, _y: f32, _zw: Float2) -> Float4 { loop {} }
+
+    #[inspirv(intrinsic(vector_new(1, 3)))]
+    pub fn from_1_3(_x: f32, _yzw: Float3) -> Float4 { loop {} }
+
+    #[inspirv(intrinsic(vector_new(2, 1, 1)))]
+    pub fn from_2_1_1(_xy: Float2, _z: f32, _w: f32) -> Float4 { loop {} }
 
     #[inspirv(intrinsic(vector_new(2, 2)))]
     pub fn from_2_2(_xy: Float2, _zw: Float2) -> Float4 { loop {} }
+
+    #[inspirv(intrinsic(vector_new(3, 1)))]
+    pub fn from_3_1(_xyz: Float3, _w: f32) -> Float4 { loop {} }
+
 
     #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 2)))]
     pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
