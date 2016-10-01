@@ -400,12 +400,29 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                             bug!("Input argument type requires to be struct type ({:?})", arg.ty)
                         }
                     } else if const_buffer {
-                        if let ty::TyAdt(_adt, _subs) = arg.ty.sty {
+                        if let ty::TyAdt(adt, _subs) = arg.ty.sty {
                             let ty = self.rust_ty_to_spirv(arg.ty);
                             let node_id = self.get_node_id(ty_id);
-                            let _ = self.builder.define_named_type(&ty, &*self.tcx.map.name(node_id).as_str());
+                            let ty_id = self.builder.define_named_type(&ty, &*self.tcx.map.name(node_id).as_str());
                             let id = self.builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
-                            self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty)))));
+                            self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty.clone())))));
+
+                            self.builder.add_decoration(ty_id, Decoration::DecorationBlock);
+                            for (member, field) in adt.struct_variant().fields.iter().enumerate() {
+                                self.builder.name_id_member(ty_id, member as u32, &*field.name.as_str());
+                            }
+
+                            let fields = if let Type::Struct(fields) = ty { fields } else { bug!("cbuffer not a struct!") };
+                            let mut offset = 0;
+                            for (member, ref field) in fields.iter().enumerate() {
+                                let unalignment = offset % field.alignment();
+                                if unalignment != 0 {
+                                    offset += field.alignment() - unalignment;
+                                }
+
+                                self.builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationOffset(LiteralInteger(offset as u32)));
+                                offset += field.size_of();
+                            }
 
                             for attr in attrs {
                                 match attr {
