@@ -23,6 +23,7 @@ pub enum Intrinsic {
     Mul,
     Transpose,
     Inverse,
+    OuterProduct,
 }
 
 impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
@@ -172,7 +173,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             match args[0] {
                 Consume(Variable(_, NoRef(ref ty), _)) |
                 Constant(_, NoRef(ref ty)) => ty,
-                _ => bug!("Unexpected transpose argument {:?}", args[0]),
+                _ => bug!("Unexpected mul argument {:?}", args[0]),
             }
         };
 
@@ -180,7 +181,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             match args[1] {
                 Consume(Variable(_, NoRef(ref ty), _)) |
                 Constant(_, NoRef(ref ty)) => ty,
-                _ => bug!("Unexpected transpose argument {:?}", args[1]),
+                _ => bug!("Unexpected mul argument {:?}", args[1]),
             }
         };
 
@@ -202,6 +203,33 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     OpMatrixTimesVector(self.ctxt.builder.define_type(&result_ty), result_id, component_ids[0], component_ids[1])
                 );
             }
+
+            (&Type::Vector { base: ref lbase, components },
+             &Type::Matrix { base: ref rbase, rows, cols }) if lbase == rbase && cols == components => {
+                let result_ty = Type::Vector { base: lbase.clone(), components: cols };
+                self.block.emit_instruction(
+                    OpVectorTimesMatrix(self.ctxt.builder.define_type(&result_ty), result_id, component_ids[0], component_ids[1])
+                );
+            }
+
+            (&Type::Matrix { ref base, rows, cols }, ref ty) if **ty == **base => {
+               self.block.emit_instruction(
+                    OpMatrixTimesScalar(self.ctxt.builder.define_type(ty), result_id, component_ids[0], component_ids[1])
+                ); 
+            }
+
+            (ref ty, &Type::Matrix { ref base, rows, cols }) if **ty == **base => {
+                self.block.emit_instruction(
+                    OpMatrixTimesScalar(self.ctxt.builder.define_type(ty), result_id, component_ids[1], component_ids[0])
+                );
+            }
+
+            (&Type::Vector { base: ref lbase, components: lcomponents },
+             &Type::Vector { base: ref rbase, components: rcomponents }) if lbase == rbase && lcomponents == rcomponents => {
+                self.block.emit_instruction(
+                    OpDot(self.ctxt.builder.define_type(lbase), result_id, component_ids[0], component_ids[1])
+                );
+             }
 
             _ => { bug!("{:?}", (left_ty, right_ty)); }
         }
