@@ -24,6 +24,8 @@ pub enum Intrinsic {
     Transpose,
     Inverse,
     OuterProduct,
+    Normalize,
+    Cross,
 }
 
 impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
@@ -88,6 +90,9 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             Mul => self.emit_mul(args_ops, component_ids),
             Transpose => self.emit_transpose(args_ops, component_ids),
             Inverse => self.emit_inverse(args_ops, component_ids),
+            Normalize => self.emit_normalize(args_ops, component_ids),
+            Cross => self.emit_cross(args_ops, component_ids),
+            OuterProduct => self.emit_outer_product(args_ops, component_ids),
             _ => bug!("Unknown function call intrinsic")
         }
     }
@@ -273,6 +278,86 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         let result_id = self.ctxt.builder.alloc_id();
         let ext_glsl = self.ctxt.builder.import_extension("GLSL.std.450");
         self.block.emit_glsl_instruction(ext_glsl, glsl::OpCode::MatrixInverse, result_id, self.ctxt.builder.define_type(&result_ty), vec![component_ids[0]]);
+        result_id
+    }
+
+    fn emit_normalize(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        // expect a vector type
+        let result_ty = {
+            use trans::SpirvOperand::*;
+            use trans::SpirvLvalue::*;
+            use trans::SpirvType::*;
+            match args[0] {
+                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components }, .. }, _)) |
+                Constant(_, Ref{ ty: Type::Vector { ref base, components }, .. }) => Type::Vector { base: base.clone(), components: components },
+                _ => bug!("Unexpected normalize argument {:?}", args[0]),
+            }
+        };
+
+        let result_id = self.ctxt.builder.alloc_id();
+        let ext_glsl = self.ctxt.builder.import_extension("GLSL.std.450");
+        self.block.emit_glsl_instruction(ext_glsl, glsl::OpCode::Normalize, result_id, self.ctxt.builder.define_type(&result_ty), vec![component_ids[0]]);
+        result_id
+    }
+
+    fn emit_cross(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        // expect a vec3 type
+        use trans::SpirvOperand::*;
+        use trans::SpirvLvalue::*;
+        use trans::SpirvType::*;
+
+        let left_ty = {
+            match args[0] {
+                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components: 3 }, .. }, _)) |
+                Constant(_, Ref{ ty: Type::Vector { ref base, components: 3 }, .. }) => Type::Vector { base: base.clone(), components: 3 },
+                _ => bug!("Unexpected cross argument {:?}", args[0]),
+            }
+        };
+
+        let right_ty = {
+            match args[1] {
+                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components: 3 }, .. }, _)) |
+                Constant(_, Ref{ ty: Type::Vector { ref base, components: 3 }, .. }) => Type::Vector { base: base.clone(), components: 3 },
+                _ => bug!("Unexpected cross argument {:?}", args[1]),
+            }
+        };
+
+        // TODO: check same base types
+
+        let result_id = self.ctxt.builder.alloc_id();
+        let ext_glsl = self.ctxt.builder.import_extension("GLSL.std.450");
+        self.block.emit_glsl_instruction(ext_glsl, glsl::OpCode::Cross, result_id, self.ctxt.builder.define_type(&left_ty), vec![component_ids[0], component_ids[1]]);
+        result_id
+    }
+
+    fn emit_outer_product(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        // expect a vector type
+        use trans::SpirvOperand::*;
+        use trans::SpirvLvalue::*;
+        use trans::SpirvType::*;
+
+        let left_ty = {
+            match args[0] {
+                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components }, .. }, _)) |
+                Constant(_, Ref{ ty: Type::Vector { ref base, components }, .. }) => Type::Vector { base: base.clone(), components: components },
+                _ => bug!("Unexpected cross argument {:?}", args[0]),
+            }
+        };
+
+        let right_ty = {
+            match args[1] {
+                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components }, .. }, _)) |
+                Constant(_, Ref{ ty: Type::Vector { ref base, components }, .. }) => Type::Vector { base: base.clone(), components: components },
+                _ => bug!("Unexpected cross argument {:?}", args[1]),
+            }
+        };
+
+        // TODO: check same types
+
+        let result_id = self.ctxt.builder.alloc_id();
+        self.block.emit_instruction(
+            OpOuterProduct(self.ctxt.builder.define_type(&left_ty), result_id, component_ids[0], component_ids[1])
+        );
         result_id
     }
 }
