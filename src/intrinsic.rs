@@ -20,6 +20,8 @@ pub enum Intrinsic {
         components_in1: u32
     },
     VectorNew(Vec<u32>),
+    Add,
+    Sub,
     Mul,
     Transpose,
     Inverse,
@@ -87,6 +89,8 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 }
             }
 
+            Add => self.emit_add(args_ops, component_ids),
+            Sub => self.emit_sub(args_ops, component_ids),
             Mul => self.emit_mul(args_ops, component_ids),
             Transpose => self.emit_transpose(args_ops, component_ids),
             Inverse => self.emit_inverse(args_ops, component_ids),
@@ -166,6 +170,78 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             );
             composite_id
         }
+    }
+
+    // Addition for non-standard types (vector)
+    fn emit_add(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        use trans::SpirvOperand::*;
+        use trans::SpirvLvalue::*;
+        use trans::SpirvType::*;
+
+        let left_ty = {
+            match args[0] {
+                Consume(Variable(_, NoRef(ref ty), _)) |
+                Constant(_, NoRef(ref ty)) => ty,
+                _ => bug!("Unexpected add argument {:?}", args[0]),
+            }
+        };
+
+        let right_ty = {
+            match args[1] {
+                Consume(Variable(_, NoRef(ref ty), _)) |
+                Constant(_, NoRef(ref ty)) => ty,
+                _ => bug!("Unexpected add argument {:?}", args[1]),
+            }
+        };
+
+        let result_id = self.ctxt.builder.alloc_id();
+
+        match (left_ty, right_ty) {
+            (&Type::Vector { base: ref lbase, components: lcomponents },
+             &Type::Vector { base: ref rbase, components: rcomponents }) if lbase == rbase && lcomponents == rcomponents => {
+                // TODO
+             }
+
+            _ => { bug!("{:?}", (left_ty, right_ty)); }
+        }
+        
+        result_id
+    }
+
+    // Substraction for non-standard types (vector)
+    fn emit_sub(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+        use trans::SpirvOperand::*;
+        use trans::SpirvLvalue::*;
+        use trans::SpirvType::*;
+
+        let left_ty = {
+            match args[0] {
+                Consume(Variable(_, NoRef(ref ty), _)) |
+                Constant(_, NoRef(ref ty)) => ty,
+                _ => bug!("Unexpected add argument {:?}", args[0]),
+            }
+        };
+
+        let right_ty = {
+            match args[1] {
+                Consume(Variable(_, NoRef(ref ty), _)) |
+                Constant(_, NoRef(ref ty)) => ty,
+                _ => bug!("Unexpected add argument {:?}", args[1]),
+            }
+        };
+
+        let result_id = self.ctxt.builder.alloc_id();
+
+        match (left_ty, right_ty) {
+            (&Type::Vector { base: ref lbase, components: lcomponents },
+             &Type::Vector { base: ref rbase, components: rcomponents }) if lbase == rbase && lcomponents == rcomponents => {
+                // TODO
+             }
+
+            _ => { bug!("{:?}", (left_ty, right_ty)); }
+        }
+        
+        result_id
     }
 
     // Multiplication for non-standard types (matrix and vector)

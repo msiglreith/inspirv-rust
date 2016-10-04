@@ -371,15 +371,22 @@ pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attr
                                                     } 
                                                 }
                                                 MetaItemKind::Word(ref name) => {
-                                                    match &**name {
-                                                        "mul" => { attrs.push(Attribute::Intrinsic(Intrinsic::Mul)); }
-                                                        "transpose" => { attrs.push(Attribute::Intrinsic(Intrinsic::Transpose)); }
-                                                        "inverse" => { attrs.push(Attribute::Intrinsic(Intrinsic::Inverse)); }
-                                                        "outer_product" => { attrs.push(Attribute::Intrinsic(Intrinsic::OuterProduct)); }
-                                                        "normalize" => { attrs.push(Attribute::Intrinsic(Intrinsic::Normalize)); }
-                                                        "cross" => { attrs.push(Attribute::Intrinsic(Intrinsic::Cross)); }
-                                                        _ => sess.span_err(item.span, "Unknown `inspirv` intrinsic"),
-                                                    }
+                                                    let intrinsic = match &**name {
+                                                        "add" => Intrinsic::Add,
+                                                        "sub" => Intrinsic::Sub,
+                                                        "mul" => Intrinsic::Mul,
+                                                        "transpose" => Intrinsic::Transpose,
+                                                        "inverse" => Intrinsic::Inverse,
+                                                        "outer_product" => Intrinsic::OuterProduct,
+                                                        "normalize" => Intrinsic::Normalize,
+                                                        "cross" => Intrinsic::Cross,
+                                                        _ => {
+                                                            sess.span_err(item.span, "Unknown `inspirv` intrinsic");
+                                                            continue;
+                                                        }
+                                                    };
+
+                                                    attrs.push(Attribute::Intrinsic(intrinsic));
                                                 }
                                                 _ => sess.span_err(item.span, "Unknown `inspirv` intrinsic attribute item"),
                                             }

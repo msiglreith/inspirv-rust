@@ -2,6 +2,8 @@
 use super::core::marker::{Copy, Sized};
 use super::{Float2x2, Float3x3, Float4x4};
 
+use super::core::ops::{Add, Sub};
+
 #[inspirv(vector(base = "f32", components = 2))]
 pub struct Float2 {
     pub x: f32,
@@ -30,6 +32,20 @@ impl Float2 {
 
     #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float2 { loop {} }
+}
+
+impl Add<Float2> for Float2 {
+    type Output = Float2;
+
+    #[inspirv(intrinsic(add))]
+    fn add(self, _rhs: Float2) -> Self::Output { loop {} }
+}
+
+impl Sub<Float2> for Float2 {
+    type Output = Float2;
+
+    #[inspirv(intrinsic(sub))]
+    fn sub(self, _rhs: Float2) -> Self::Output { loop {} }
 }
 
 #[inspirv(vector(base = "f32", components = 3))]
@@ -70,6 +86,20 @@ impl Float3 {
 
     #[inspirv(intrinsic(cross))]
     pub fn cross(self, _rhs: Float3) -> Float3 { loop {} }
+}
+
+impl Add<Float3> for Float3 {
+    type Output = Float3;
+
+    #[inspirv(intrinsic(add))]
+    fn add(self, _rhs: Float3) -> Self::Output { loop {} }
+}
+
+impl Sub<Float3> for Float3 {
+    type Output = Float3;
+
+    #[inspirv(intrinsic(sub))]
+    fn sub(self, _rhs: Float3) -> Self::Output { loop {} }
 }
 
 #[inspirv(vector(base = "f32", components = 4))]
@@ -146,4 +176,18 @@ impl Float4 {
 
     #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float4 { loop {} }
+}
+
+impl Add<Float4> for Float4 {
+    type Output = Float4;
+
+    #[inspirv(intrinsic(add))]
+    fn add(self, _rhs: Float4) -> Self::Output { loop {} }
+}
+
+impl Sub<Float4> for Float4 {
+    type Output = Float4;
+
+    #[inspirv(intrinsic(sub))]
+    fn sub(self, _rhs: Float4) -> Self::Output { loop {} }
 }
