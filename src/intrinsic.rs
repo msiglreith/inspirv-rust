@@ -249,8 +249,8 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             use trans::SpirvLvalue::*;
             use trans::SpirvType::*;
             match args[0] {
-                Consume(Variable(_, Ref{ ty: Type::Matrix { ref base, rows, cols }, .. }, _)) |
-                Constant(_, Ref{ ty: Type::Matrix { ref base, rows, cols }, .. }) => Type::Matrix { base: base.clone(), rows: cols, cols: rows },
+                Consume(Variable(_, NoRef(Type::Matrix { ref base, rows, cols }), _)) |
+                Constant(_, NoRef(Type::Matrix { ref base, rows, cols })) => Type::Matrix { base: base.clone(), rows: cols, cols: rows },
                 _ => bug!("Unexpected transpose argument {:?}", args[0]),
             }
         };
@@ -269,8 +269,8 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             use trans::SpirvLvalue::*;
             use trans::SpirvType::*;
             match args[0] {
-                Consume(Variable(_, Ref{ ty: Type::Matrix { ref base, rows, cols }, .. }, _)) |
-                Constant(_, Ref{ ty: Type::Matrix { ref base, rows, cols }, .. }) if rows == cols => Type::Matrix { base: base.clone(), rows: rows, cols: cols },
+                Consume(Variable(_, NoRef(Type::Matrix { ref base, rows, cols }), _)) |
+                Constant(_, NoRef(Type::Matrix { ref base, rows, cols })) if rows == cols => Type::Matrix { base: base.clone(), rows: rows, cols: cols },
                 _ => bug!("Unexpected inverse argument {:?}", args[0]),
             }
         };
@@ -288,8 +288,8 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             use trans::SpirvLvalue::*;
             use trans::SpirvType::*;
             match args[0] {
-                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components }, .. }, _)) |
-                Constant(_, Ref{ ty: Type::Vector { ref base, components }, .. }) => Type::Vector { base: base.clone(), components: components },
+                Consume(Variable(_, NoRef(Type::Vector { ref base, components }), _)) |
+                Constant(_, NoRef(Type::Vector { ref base, components })) => Type::Vector { base: base.clone(), components: components },
                 _ => bug!("Unexpected normalize argument {:?}", args[0]),
             }
         };
@@ -308,16 +308,16 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
         let left_ty = {
             match args[0] {
-                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components: 3 }, .. }, _)) |
-                Constant(_, Ref{ ty: Type::Vector { ref base, components: 3 }, .. }) => Type::Vector { base: base.clone(), components: 3 },
+                Consume(Variable(_, NoRef(Type::Vector { ref base, components: 3 }), _)) |
+                Constant(_, NoRef(Type::Vector { ref base, components: 3 })) => Type::Vector { base: base.clone(), components: 3 },
                 _ => bug!("Unexpected cross argument {:?}", args[0]),
             }
         };
 
         let right_ty = {
             match args[1] {
-                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components: 3 }, .. }, _)) |
-                Constant(_, Ref{ ty: Type::Vector { ref base, components: 3 }, .. }) => Type::Vector { base: base.clone(), components: 3 },
+                Consume(Variable(_, NoRef(Type::Vector { ref base, components: 3 }), _)) |
+                Constant(_, NoRef(Type::Vector { ref base, components: 3 })) => Type::Vector { base: base.clone(), components: 3 },
                 _ => bug!("Unexpected cross argument {:?}", args[1]),
             }
         };
@@ -338,16 +338,16 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
         let left_ty = {
             match args[0] {
-                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components }, .. }, _)) |
-                Constant(_, Ref{ ty: Type::Vector { ref base, components }, .. }) => Type::Vector { base: base.clone(), components: components },
+                Consume(Variable(_, NoRef(Type::Vector { ref base, components }), _)) |
+                Constant(_, NoRef(Type::Vector { ref base, components })) => Type::Vector { base: base.clone(), components: components },
                 _ => bug!("Unexpected cross argument {:?}", args[0]),
             }
         };
 
         let right_ty = {
             match args[1] {
-                Consume(Variable(_, Ref{ ty: Type::Vector { ref base, components }, .. }, _)) |
-                Constant(_, Ref{ ty: Type::Vector { ref base, components }, .. }) => Type::Vector { base: base.clone(), components: components },
+                Consume(Variable(_, NoRef(Type::Vector { ref base, components }), _)) |
+                Constant(_, NoRef(Type::Vector { ref base, components })) => Type::Vector { base: base.clone(), components: components },
                 _ => bug!("Unexpected cross argument {:?}", args[1]),
             }
         };

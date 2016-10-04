@@ -667,15 +667,6 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     Some(SpirvLvalue::Variable(var_id, var_ty, StorageClassFunction))
                 }
             }
-            /*
-            ReturnPointer => {
-                match self.return_ids {
-                    Some(FuncReturn::Return((var_id, ref var_ty))) => Some(SpirvLvalue::Return((var_id, var_ty.clone()))),
-                    Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::SignatureStruct(interfaces.clone(), StorageClassOutput)),
-                    None => Some(SpirvLvalue::Ignore),
-                }
-            }
-            */
             Static(_def_id) => {
                 println!("inspirv: unsupported lvalue {:?}", lvalue);
                 None
@@ -734,14 +725,6 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     Some(var_ty)
                 }
             }
-            /*
-            ReturnPointer => {
-                match self.return_ids {
-                    Some(FuncReturn::Return((_, ref mut var_ty))) => Some(var_ty),
-                    _ => None,
-                }
-            }
-            */
             Static(_def_id) => {
                 println!("inspirv: unsupported lvalue {:?}", lvalue);
                 None
