@@ -28,7 +28,7 @@ impl Float2 {
     #[inspirv(intrinsic(outer_product))]
     pub fn outer(self, _rhs: &Float2) -> Float2x2 { loop {} }
 
-    #[inspirv(intrinsic(normalize)]
+    #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float2 { loop {} }
 }
 
@@ -65,10 +65,10 @@ impl Float3 {
     #[inspirv(intrinsic(outer_product))]
     pub fn outer(self, _rhs: Float3) -> Float3x3 { loop {} }
 
-    #[inspirv(intrinsic(normalize)]
+    #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float3 { loop {} }
 
-    #[inspirv(intrinsic(cross)]
+    #[inspirv(intrinsic(cross))]
     pub fn cross(self, _rhs: Float3) -> Float3 { loop {} }
 }
 
@@ -144,6 +144,6 @@ impl Float4 {
     #[inspirv(intrinsic(outer_product))]
     pub fn outer(self, _rhs: Float4) -> Float4x4 { loop {} }
 
-    #[inspirv(intrinsic(normalize)]
+    #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float4 { loop {} }
 }
