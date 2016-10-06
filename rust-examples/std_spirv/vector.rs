@@ -2,7 +2,7 @@
 use super::core::marker::{Copy, Sized};
 use super::{Float2x2, Float3x3, Float4x4};
 
-use super::core::ops::{Add, Sub};
+use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
 #[inspirv(vector(base = "f32", components = 2))]
 pub struct Float2 {
@@ -13,7 +13,7 @@ impl Copy for Float2 {}
 
 impl Float2 {
     #[inspirv(intrinsic(vector_new(1, 1)))]
-    pub fn new(_x: f32, _y: f32) -> Float3 { loop {} }
+    pub fn new(_x: f32, _y: f32) -> Float2 { loop {} }
 
     #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 2)))]
     pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
@@ -39,6 +39,14 @@ impl Add<Float2> for Float2 {
 
     #[inspirv(intrinsic(add))]
     fn add(self, _rhs: Float2) -> Self::Output { loop {} }
+}
+
+
+impl AddAssign<Float2> for Float2 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Float2) {
+        *self = *self + rhs;
+    }
 }
 
 impl Sub<Float2> for Float2 {

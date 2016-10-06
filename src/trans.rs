@@ -202,7 +202,7 @@ pub struct InspirvFnCtxt<'v, 'tcx: 'v> {
     substs: Option<&'v Substs<'tcx>>,
 
     arg_ids: IndexVec<Local, Option<FuncArg>>,
-    local_ids: IndexVec<Local, IdAndType>,
+    local_ids: IndexVec<Local, Option<IdAndType>>,
     return_ids: Option<FuncReturn>,
 }
 
@@ -333,130 +333,119 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             // Extract all arguments and store their ids in a list for faster access later
             // Arguments as Input interface if the structs have to corresponding annotations
             for (i, arg) in self.mir.local_decls.iter().enumerate() {
-                if i >= self.mir.arg_count {
+                // check for parameter range
+                if i == 0 {
+                    continue;
+                } else if i > self.mir.arg_count {
                     break;
                 }
 
-                if let Some(name) = arg.name {
-                    let name = &*name.as_str();
-                    if let Some(ty_id) = arg.ty.ty_to_def_id() {
-                        let attrs = self.get_node_attributes(ty_id);
-                        let interface = attrs.iter().any(|attr| match *attr {
-                                Attribute::Interface => true,
-                                _ => false,
-                            });
-                        let const_buffer = attrs.iter().any(|attr| match *attr {
-                                Attribute::ConstBuffer => true,
-                                _ => false,
-                            });
+                let name = arg.name.map(|name| (&*name.as_str()).to_owned()).unwrap_or("_".to_owned());
 
-                        if interface {
-                            if let ty::TyAdt(adt, subs) = arg.ty.sty {
-                                let interfaces = adt.struct_variant().fields.iter().map(|field| {
-                                    let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs));
-                                    let node_id = self.get_node_id(ty_id);
-                                    let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
-                                    let id = self.builder.define_variable(name.as_str(), ty.clone(),
-                                                                 StorageClass::StorageClassInput);
+                if let Some(ty_id) = arg.ty.ty_to_def_id() {
+                    let attrs = self.get_node_attributes(ty_id);
+                    let interface = attrs.iter().any(|attr| match *attr {
+                            Attribute::Interface => true,
+                            _ => false,
+                        });
+                    let const_buffer = attrs.iter().any(|attr| match *attr {
+                            Attribute::ConstBuffer => true,
+                            _ => false,
+                        });
 
-                                    // HELP! A nicer way to get the attributes?
-                                    // Get struct field attributes
-                                    let node = self.tcx.map.get(node_id);
-                                    let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
-                                    let field_attrs = {
-                                        if let hir::map::Node::NodeItem(item) = node {
-                                            if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
-                                                let field = variant_data.fields().iter()
-                                                                        .find(|field| field.id == field_id)
-                                                                        .expect("Unable to find struct field by id");
-                                                attribute::parse(self.tcx.sess, &*field.attrs)
-                                            } else {
-                                                bug!("Struct item node should be a struct {:?}", item.node)
-                                            }
-                                        } else {
-                                            bug!("Struct node should be a NodeItem {:?}", node)
-                                        }
-                                    };
-
-                                    for attr in field_attrs {
-                                        match attr {
-                                            Attribute::Location { location } => {
-                                                self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
-                                            }
-                                            // Rust doesn't allow attributes associated with `type foo = bar` /:
-                                            Attribute::Builtin { builtin } => {
-                                                // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
-                                                self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
-                                            }
-                                            _ => ()
-                                        }
-                                    }
-
-                                    interface_ids.push(id);
-                                    (id, ty)
-                                }).collect::<Vec<_>>();
-
-                                self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
-                            } else {
-                                bug!("Input argument type requires to be struct type ({:?})", arg.ty)
-                            }
-                        } else if const_buffer {
-                            if let ty::TyAdt(adt, _subs) = arg.ty.sty {
-                                let ty = self.rust_ty_to_spirv(arg.ty);
+                    if interface {
+                        if let ty::TyAdt(adt, subs) = arg.ty.sty {
+                            let interfaces = adt.struct_variant().fields.iter().map(|field| {
+                                let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs));
                                 let node_id = self.get_node_id(ty_id);
-                                let ty_id = self.builder.define_named_type(&ty, &*self.tcx.map.name(node_id).as_str());
-                                let id = self.builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
-                                self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty.clone())))));
+                                let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
+                                let id = self.builder.define_variable(name.as_str(), ty.clone(),
+                                                             StorageClass::StorageClassInput);
 
-                                self.builder.add_decoration(ty_id, Decoration::DecorationBlock);
-                                for (member, field) in adt.struct_variant().fields.iter().enumerate() {
-                                    self.builder.name_id_member(ty_id, member as u32, &*field.name.as_str());
-                                }
-
-                                let fields = if let Type::Struct(fields) = ty { fields } else { bug!("cbuffer not a struct!") };
-                                let mut offset = 0;
-                                for (member, ref field) in fields.iter().enumerate() {
-                                    let unalignment = offset % field.alignment();
-                                    if unalignment != 0 {
-                                        offset += field.alignment() - unalignment;
+                                // HELP! A nicer way to get the attributes?
+                                // Get struct field attributes
+                                let node = self.tcx.map.get(node_id);
+                                let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
+                                let field_attrs = {
+                                    if let hir::map::Node::NodeItem(item) = node {
+                                        if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
+                                            let field = variant_data.fields().iter()
+                                                                    .find(|field| field.id == field_id)
+                                                                    .expect("Unable to find struct field by id");
+                                            attribute::parse(self.tcx.sess, &*field.attrs)
+                                        } else {
+                                            bug!("Struct item node should be a struct {:?}", item.node)
+                                        }
+                                    } else {
+                                        bug!("Struct node should be a NodeItem {:?}", node)
                                     }
+                                };
 
-                                    self.builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationOffset(LiteralInteger(offset as u32)));
-                                    offset += field.size_of();
-                                }
-
-                                for attr in attrs {
+                                for attr in field_attrs {
                                     match attr {
-                                        Attribute::Descriptor { set, binding } => {
-                                            self.builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
-                                            self.builder.add_decoration(id, Decoration::DecorationBinding(LiteralInteger(binding as u32)));
+                                        Attribute::Location { location } => {
+                                            self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
+                                        }
+                                        // Rust doesn't allow attributes associated with `type foo = bar` /:
+                                        Attribute::Builtin { builtin } => {
+                                            // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
+                                            self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
                                         }
                                         _ => ()
                                     }
                                 }
 
-                            } else {
-                                bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
-                            }
-                        } else if entry_point.is_some() {
-                            // Entrypoint functions don't have actual input/output parameters
-                            // We use them for the shader interface and const buffers
-                            bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
+                                interface_ids.push(id);
+                                (id, ty)
+                            }).collect::<Vec<_>>();
+
+                            self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
                         } else {
-                            let id = self.builder.alloc_id();
-                            let ty = self.rust_ty_to_spirv_ref(arg.ty);
-                            let arg = Argument {
-                                id: id,
-                                ty: ty.clone().into(),
-                            };
-                            params.push(arg);
-                            self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
-                            self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
+                            bug!("Input argument type requires to be struct type ({:?})", arg.ty)
+                        }
+                    } else if const_buffer {
+                        if let ty::TyAdt(adt, _subs) = arg.ty.sty {
+                            let ty = self.rust_ty_to_spirv(arg.ty);
+                            let node_id = self.get_node_id(ty_id);
+                            let ty_id = self.builder.define_named_type(&ty, &*self.tcx.map.name(node_id).as_str());
+                            let id = self.builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
+                            self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty.clone())))));
+
+                            self.builder.add_decoration(ty_id, Decoration::DecorationBlock);
+                            for (member, field) in adt.struct_variant().fields.iter().enumerate() {
+                                self.builder.name_id_member(ty_id, member as u32, &*field.name.as_str());
+                            }
+
+                            let fields = if let Type::Struct(fields) = ty { fields } else { bug!("cbuffer not a struct!") };
+                            let mut offset = 0;
+                            for (member, ref field) in fields.iter().enumerate() {
+                                let unalignment = offset % field.alignment();
+                                if unalignment != 0 {
+                                    offset += field.alignment() - unalignment;
+                                }
+
+                                self.builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationOffset(LiteralInteger(offset as u32)));
+                                offset += field.size_of();
+                            }
+
+                            for attr in attrs {
+                                match attr {
+                                    Attribute::Descriptor { set, binding } => {
+                                        self.builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
+                                        self.builder.add_decoration(id, Decoration::DecorationBinding(LiteralInteger(binding as u32)));
+                                    }
+                                    _ => ()
+                                }
+                            }
+
+                        } else {
+                            bug!("Const buffer argument type requires to be struct type ({:?})", arg.ty)
                         }
                     } else if entry_point.is_some() {
-                        bug!("Argument type not defined in local crate({:?})", arg.ty)
+                        // Entrypoint functions don't have actual input/output parameters
+                        // We use them for the shader interface and const buffers
+                        bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
                     } else {
-                        //
                         let id = self.builder.alloc_id();
                         let ty = self.rust_ty_to_spirv_ref(arg.ty);
                         let arg = Argument {
@@ -467,10 +456,20 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
                         self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
                     }
+                } else if entry_point.is_some() {
+                    bug!("Argument type not defined in local crate({:?})", arg.ty)
                 } else {
-                     self.arg_ids.push(None);
-                }
-                
+                    //
+                    let id = self.builder.alloc_id();
+                    let ty = self.rust_ty_to_spirv_ref(arg.ty);
+                    let arg = Argument {
+                        id: id,
+                        ty: ty.clone().into(),
+                    };
+                    params.push(arg);
+                    self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
+                    self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
+                }                
             }
 
             // Return type
@@ -564,7 +563,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 // Standard function
                 let mut func = self.builder.define_function_named(fn_name);
 
-                func.params = params;
+                func.params = params; // TODO: remove references
 
                 let return_ty = self.rust_ty_to_spirv_ref(self.mir.return_ty);
                 if return_ty.is_ref() {
@@ -595,21 +594,25 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     fn trans(&mut self, mut fn_module: inspirv_builder::Function) {
         // local variables and temporaries
         self.local_ids = {
-            let mut ids: IndexVec<Local, IdAndType> = IndexVec::new();
+            let mut ids: IndexVec<Local, Option<IdAndType>> = IndexVec::new();
             for (i, local) in self.mir.local_decls.iter().enumerate() {
-                if i < self.mir.arg_count {
+                if i < self.mir.arg_count + 1 {
                     continue;
                 }
                 let id = self.builder.alloc_id();
                 let ty = self.rust_ty_to_spirv_ref(local.ty);
-                let local_var = LocalVar {
-                    id: id,
-                    ty: ty.clone().into(),
-                };
-                fn_module.variables.push(local_var);
-                ids.push((id, ty));
-                if let Some(name) = local.name {
-                    self.builder.name_id(id, &*name.as_str()); // TODO: hide this behind a function module interface
+                if let &Type::Void = ty.ty() {
+                    ids.push(None);
+                } else {
+                    let local_var = LocalVar {
+                        id: id,
+                        ty: ty.clone().into(),
+                    };
+                    fn_module.variables.push(local_var);
+                    ids.push(Some((id, ty)));
+                    if let Some(name) = local.name {
+                        self.builder.name_id(id, &*name.as_str()); // TODO: hide this behind a function module interface
+                    }
                 }
             }
             ids
@@ -651,7 +654,17 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         use self::SpirvType::*;
         match *lvalue {
             Local(id) => {
-                if id.index() < self.arg_ids.len() {
+                let idx = id.index();
+                if idx == 0 {
+                    // return value
+                    match self.return_ids {
+                        Some(FuncReturn::Return((var_id, ref var_ty))) => Some(SpirvLvalue::Return((var_id, var_ty.clone()))),
+                        Some(FuncReturn::Interface(ref interfaces)) => Some(SpirvLvalue::SignatureStruct(interfaces.clone(), StorageClassOutput)),
+                        None => Some(SpirvLvalue::Ignore),
+                    }
+                } else if idx < (self.arg_ids.len() + 1) {
+                    // arguments
+                    let id = Idx::new(idx - 1);
                     if let Some(arg) = self.arg_ids[id].clone() {
                         match arg {
                             FuncArg::Argument((id, ty)) => Some(SpirvLvalue::Variable(id, ty, StorageClassFunction)),
@@ -662,9 +675,13 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         Some(SpirvLvalue::Ignore) // unnamed argument `_`
                     }
                 } else {
-                    let id = Idx::new(id.index() - self.arg_ids.len());
-                    let (var_id, var_ty) = self.local_ids[id].clone();
-                    Some(SpirvLvalue::Variable(var_id, var_ty, StorageClassFunction))
+                    // locals
+                    let id = Idx::new(idx - (self.arg_ids.len() + 1));
+                    if let Some((var_id, var_ty)) = self.local_ids[id].clone() {
+                        Some(SpirvLvalue::Variable(var_id, var_ty, StorageClassFunction))
+                    } else {
+                        Some(SpirvLvalue::Ignore)
+                    }
                 }
             }
             Static(_def_id) => {
@@ -710,7 +727,14 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         use rustc::mir::repr::Lvalue::*;
         match *lvalue {
             Local(id) => {
-                if id.index() < self.arg_ids.len() {
+                let idx = id.index();
+                if idx == 0 {
+                    match self.return_ids {
+                        Some(FuncReturn::Return((_, ref mut var_ty))) => Some(var_ty),
+                        _ => None,
+                    }
+                } else if idx < (self.arg_ids.len() + 1) {
+                    let id = Idx::new(idx - 1);
                     if let Some(ref mut arg) = self.arg_ids[id] {
                         match *arg {
                             FuncArg::Argument((_, ref mut ty)) => Some(ty),
@@ -720,9 +744,12 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         unreachable!()
                     }
                 } else {
-                    let id = Idx::new(id.index() - self.arg_ids.len());
-                    let (_, ref mut var_ty) = self.local_ids[id];
-                    Some(var_ty)
+                    let id = Idx::new(idx - self.arg_ids.len() - 1);
+                    if let Some((_, ref mut var_ty)) = self.local_ids[id] {
+                        Some(var_ty)
+                    } else {
+                        None
+                    }
                 }
             }
             Static(_def_id) => {
@@ -1109,8 +1136,11 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     (&Type::Void, _) | (_, &None) => {
                         self.block.branch_instr = Some(BranchInstruction::Return(OpReturn));
                     }
-                    (_, &Some(FuncReturn::Return((id, _)))) => {
-                        self.block.branch_instr = Some(BranchInstruction::ReturnValue(OpReturnValue(id)));
+                    (_, &Some(FuncReturn::Return((id, ref ty)))) => {
+                        let load_id = self.ctxt.builder.alloc_id();
+                        let op_load = OpLoad(self.ctxt.builder.define_type(ty), load_id, id, None);
+                        self.block.emit_instruction(op_load);
+                        self.block.branch_instr = Some(BranchInstruction::ReturnValue(OpReturnValue(load_id)));
                     }
                     (_, &Some(FuncReturn::Interface(..))) => unreachable!(),
                 }
@@ -1180,12 +1210,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                             let component_ids = args_ops.iter().filter_map(
                                                     |arg| match *arg {
                                                         SpirvOperand::Constant(c, _) => Some(c),
-                                                        SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
-                                                            let op_id = self.ctxt.builder.alloc_id();
-                                                            let op_load = OpLoad(self.ctxt.builder.define_type(op_ty), op_id, op_ptr_id, None);
-                                                            self.block.emit_instruction(op_load);
-                                                            Some(op_id)
-                                                        }
+                                                        SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, _, _)) => Some(op_ptr_id),
                                                         _ => None
                                                     }).collect::<Vec<_>>();
 

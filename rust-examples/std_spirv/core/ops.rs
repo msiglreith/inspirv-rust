@@ -727,3 +727,44 @@ impl DivAssign for isize {
     #[inspirv(compiler_builtin)]
     fn div_assign(&mut self, other: isize) { *self /= other }
 }
+
+/// The `Deref` trait is used to specify the functionality of dereferencing
+/// operations, like `*v`.
+///
+/// `Deref` also enables ['`Deref` coercions'][coercions].
+///
+/// [coercions]: ../../book/deref-coercions.html
+///
+/// # Examples
+///
+/// A struct with a single field which is accessible via dereferencing the
+/// struct.
+///
+/// ```
+/// use std::ops::Deref;
+///
+/// struct DerefExample<T> {
+///     value: T
+/// }
+///
+/// impl<T> Deref for DerefExample<T> {
+///     type Target = T;
+///
+///     fn deref(&self) -> &T {
+///         &self.value
+///     }
+/// }
+///
+/// fn main() {
+///     let x = DerefExample { value: 'a' };
+///     assert_eq!('a', *x);
+/// }
+/// ```
+#[lang = "deref"]
+pub trait Deref {
+    /// The resulting type after dereferencing
+    type Target: ?Sized;
+
+    /// The method called to dereference a value
+    fn deref(&self) -> &Self::Target;
+}

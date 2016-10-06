@@ -199,8 +199,22 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         match (left_ty, right_ty) {
             (&Type::Vector { base: ref lbase, components: lcomponents },
              &Type::Vector { base: ref rbase, components: rcomponents }) if lbase == rbase && lcomponents == rcomponents => {
-                // TODO
-             }
+                match **lbase {
+                    Type::Int(..) => {
+                        self.block.emit_instruction(
+                            OpIAdd(self.ctxt.builder.define_type(left_ty), result_id, component_ids[0], component_ids[1])
+                        );
+                    }
+
+                    Type::Float(..) => {
+                        self.block.emit_instruction(
+                            OpFAdd(self.ctxt.builder.define_type(left_ty), result_id, component_ids[0], component_ids[1])
+                        );
+                    }
+
+                    _ => { bug!("{:?}", (left_ty, right_ty)); }
+                }
+            }
 
             _ => { bug!("{:?}", (left_ty, right_ty)); }
         }

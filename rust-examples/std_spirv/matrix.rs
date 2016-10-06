@@ -1,11 +1,15 @@
 
 use super::core::marker::{Copy, Sized};
-use super::core::ops::Mul;
+use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
 use super::{Float2, Float3, Float4};
 
 #[inspirv(matrix(base = "f32", rows = 2, cols = 2))]
-pub struct Float2x2;
+pub struct Float2x2 {
+    row0: Float2,
+    row1: Float2,
+}
+
 impl Copy for Float2x2 {}
 
 impl Float2x2 {
@@ -14,6 +18,20 @@ impl Float2x2 {
 
     #[inspirv(intrinsic(inverse))]
     pub fn inverse(&self) -> Float2x2 { loop {} }
+}
+
+impl Add<Float2x2> for Float2x2 {
+    type Output = Float2x2;
+
+    #[inspirv(intrinsic(add))]
+    fn add(self, _rhs: Float2x2) -> Self::Output { loop {} }
+}
+
+impl Sub<Float2x2> for Float2x2 {
+    type Output = Float2x2;
+
+    #[inspirv(intrinsic(add))]
+    fn sub(self, _rhs: Float2x2) -> Self::Output { loop {} }
 }
 
 impl Mul<f32> for Float2x2 {
@@ -49,6 +67,20 @@ impl Float3x3 {
     pub fn inverse(self) -> Float3x3 { loop {} }
 }
 
+impl Add<Float3x3> for Float3x3 {
+    type Output = Float3x3;
+
+    #[inspirv(intrinsic(add))]
+    fn add(self, _rhs: Float3x3) -> Self::Output { loop {} }
+}
+
+impl Sub<Float3x3> for Float3x3 {
+    type Output = Float3x3;
+
+    #[inspirv(intrinsic(add))]
+    fn sub(self, _rhs: Float3x3) -> Self::Output { loop {} }
+}
+
 impl Mul<f32> for Float3x3 {
     type Output = Float3x3;
 
@@ -80,6 +112,20 @@ impl Float4x4 {
 
     #[inspirv(intrinsic(inverse))]
     pub fn inverse(self) -> Float4x4 { loop {} }
+}
+
+impl Add<Float4x4> for Float4x4 {
+    type Output = Float4x4;
+
+    #[inspirv(intrinsic(add))]
+    fn add(self, _rhs: Float4x4) -> Self::Output { loop {} }
+}
+
+impl Sub<Float4x4> for Float4x4 {
+    type Output = Float4x4;
+
+    #[inspirv(intrinsic(add))]
+    fn sub(self, _rhs: Float4x4) -> Self::Output { loop {} }
 }
 
 impl Mul<f32> for Float4x4 {
