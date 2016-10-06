@@ -3,7 +3,6 @@ use std_spirv::ops::Deref;
 
 pub struct Attributes<T>(T);
 
-/*
 impl<T> Deref for Attributes<T> {
     type Target = T;
 
@@ -12,11 +11,9 @@ impl<T> Deref for Attributes<T> {
         &self.0
     }
 }
-*/
 
 pub struct Cbuffer<T>(T);
 
-/*
 impl<T> Deref for Cbuffer<T> {
     type Target = T;
 
@@ -25,4 +22,3 @@ impl<T> Deref for Cbuffer<T> {
         &self.0
     }
 }
-*/

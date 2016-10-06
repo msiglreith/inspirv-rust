@@ -287,11 +287,10 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
     fn trans_fn(&mut self) {
         let did = self.def_id;
-
         let type_scheme = self.tcx.lookup_item_type(did);
 
         // Don't translate generic functions!
-        if self.substs.is_none() && !type_scheme.generics.types.is_empty() {
+        if self.substs.is_none() && (!type_scheme.generics.types.is_empty() || type_scheme.generics.parent_types > 0) {
             return;
         }
         
