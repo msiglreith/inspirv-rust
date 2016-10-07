@@ -206,6 +206,12 @@ pub struct InspirvFnCtxt<'v, 'tcx: 'v> {
     return_ids: Option<FuncReturn>,
 }
 
+#[derive(PartialEq, Eq)]
+enum FnTrans {
+    OnlyPublic,
+    Required,
+}
+
 impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn trans(&mut self) {
         let def_ids = self.mir_map.map.keys();
@@ -231,7 +237,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
             match src {
                 MirSource::Const(_) => fn_ctxt.trans_const(),
-                MirSource::Fn(_) => fn_ctxt.trans_fn(),
+                MirSource::Fn(_) => fn_ctxt.trans_fn(FnTrans::OnlyPublic),
                 MirSource::Static(_, mutability) => fn_ctxt.trans_static(mutability),
                 MirSource::Promoted(_, promoted) => {
                     println!("{:?}", (id, promoted, mir));
@@ -285,7 +291,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         self.trans(const_fn);
     }
 
-    fn trans_fn(&mut self) {
+    fn trans_fn(&mut self, translation_mode: FnTrans) {
         let did = self.def_id;
         let type_scheme = self.tcx.lookup_item_type(did);
 
@@ -325,6 +331,11 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 Attribute::EntryPoint { .. } => true,
                 _ => false,
             });
+
+            // only translate exported functions if requested to keep the resulting SPIR-V small
+            if translation_mode == FnTrans::OnlyPublic && entry_point.is_none() {
+                return;
+            }
 
             let mut interface_ids = Vec::new(); // entry points
             let mut params = Vec::new(); // `normal` function
@@ -578,8 +589,8 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 func.params = params; // TODO: remove references
 
                 let return_ty = self.rust_ty_to_spirv_ref(self.mir.return_ty);
-                if return_ty.is_ref() {
-                    bug!("References as return type are currently unsupported ({:?})", self.mir.return_ty)
+                if let SpirvType::Ref{ mutable: true, .. } = return_ty {
+                    bug!("Mutable references as return type are currently unsupported ({:?})", self.mir.return_ty)
                 }
                 self.return_ids = if let Type::Void = *return_ty.ty() {
                     None
@@ -720,6 +731,9 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         (&ProjectionElem::Deref, &SpirvLvalue::Variable(_id, Ref {ref ty, referent: Some(refer), ..}, storage_class)) => {
                             Some(SpirvLvalue::Variable(refer, SpirvType::NoRef(ty.clone()), storage_class))
                         }
+                        (&ProjectionElem::Deref, &SpirvLvalue::Variable(id, Ref {ref ty, referent: None, ..}, storage_class)) => {
+                            Some(SpirvLvalue::Variable(id, SpirvType::NoRef(ty.clone()), storage_class))
+                        }
                         _ => {
                             println!("inspirv: unsupported lvalue {:?}", (proj, &base));
                             None
@@ -839,8 +853,13 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             ty::TyAdt(adt, subs) if adt.is_struct() => {
                 let attrs = self.get_node_attributes(adt.did);
                 let internal_type = attrs.iter().find(|attr| match **attr {
-                    Attribute::Vector { .. }
-                    | Attribute::Matrix { .. } => true,
+                    Attribute::Vector { .. } |
+                    Attribute::Matrix { .. } => true,
+                    _ => false,
+                });
+                let wrapper_type = attrs.iter().any(|attr| match *attr {
+                    Attribute::ConstBuffer |
+                    Attribute::Interface => true,
                     _ => false,
                 });
                 if let Some(internal_type) = internal_type {
@@ -860,6 +879,8 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         }
                         _ => bug!("Unhandled internal type ({:?})", *internal_type),
                     }
+                } else if wrapper_type {
+                    self.rust_ty_to_spirv_ref(adt.struct_variant().fields[0].ty(*self.tcx, subs))
                 } else {
                     // an actual struct!
                     // TODO: handle names
@@ -1244,7 +1265,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                     return_ids: None,
                                 };
 
-                                fn_ctxt.trans_fn();
+                                fn_ctxt.trans_fn(FnTrans::Required);
                             }
 
                             let fn_id = self.ctxt.fn_ids[&(def_id, signature)];
