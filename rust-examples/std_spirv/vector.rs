@@ -55,6 +55,13 @@ impl Sub<Float2> for Float2 {
     fn sub(self, _rhs: Float2) -> Self::Output { loop {} }
 }
 
+impl SubAssign<Float2> for Float2 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Float2) {
+        *self = *self - rhs;
+    }
+}
+
 #[inspirv(vector(base = "f32", components = 3))]
 pub struct Float3 {
     pub x: f32,
@@ -102,11 +109,25 @@ impl Add<Float3> for Float3 {
     fn add(self, _rhs: Float3) -> Self::Output { loop {} }
 }
 
+impl AddAssign<Float3> for Float3 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Float3) {
+        *self = *self + rhs;
+    }
+}
+
 impl Sub<Float3> for Float3 {
     type Output = Float3;
 
     #[inspirv(intrinsic(sub))]
     fn sub(self, _rhs: Float3) -> Self::Output { loop {} }
+}
+
+impl SubAssign<Float3> for Float3 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Float3) {
+        *self = *self - rhs;
+    }
 }
 
 #[inspirv(vector(base = "f32", components = 4))]
@@ -192,9 +213,23 @@ impl Add<Float4> for Float4 {
     fn add(self, _rhs: Float4) -> Self::Output { loop {} }
 }
 
+impl AddAssign<Float4> for Float4 {
+    #[inline]
+    fn add_assign(&mut self, rhs: Float4) {
+        *self = *self + rhs;
+    }
+}
+
 impl Sub<Float4> for Float4 {
     type Output = Float4;
 
     #[inspirv(intrinsic(sub))]
     fn sub(self, _rhs: Float4) -> Self::Output { loop {} }
+}
+
+impl SubAssign<Float4> for Float4 {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Float4) {
+        *self = *self - rhs;
+    }
 }
