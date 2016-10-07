@@ -1,5 +1,5 @@
 
-use super::core::marker::{Copy, Sized};
+use super::core::marker::Copy;
 use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
 use super::{Float2, Float3, Float4};
