@@ -7,45 +7,32 @@
 mod std_spirv;
 use std_spirv::*;
 
-#[inspirv(interface)]
 struct QuadVertex {
-    #[inspirv(location = 0)]
-    pos: Float4,
-
-    #[inspirv(location = 1)]
-    color: Float4,
+    #[inspirv(location = 0)] pos: Float4,
+    #[inspirv(location = 1)] color: Float4,
 }
 
-#[inspirv(interface)]
 struct QuadVarying {
-    #[inspirv(location = 0)]
     #[inspirv(builtin = "Position")]
-    pos: Float4,
-
-    #[inspirv(location = 1)]
-    color: Float4,
+    #[inspirv(location = 0)] pos: Float4,
+    #[inspirv(location = 1)] color: Float4,
 }
 
-#[inspirv(interface)]
 struct QuadFragment {
-    #[inspirv(builtin = "FragCoord")]
-    coord: Float4,
+    #[inspirv(builtin = "FragCoord")] coord: Float4,
 }
 
-#[inspirv(interface)]
 struct QuadOut {
-    #[inspirv(location = 0)]
-    color: Float4,
+    #[inspirv(location = 0)] color: Float4,
 }
 
-#[inspirv(const_buffer)]
 #[inspirv(descriptor(set = 0, binding = 0))]
 struct Locals {
-
+    dimensions: Float2,
 }
 
 #[inspirv(entry_point = "vertex")]
-fn vertex(input: QuadVertex, locals: Locals) -> QuadVarying {
+fn vertex(input: Attributes<QuadVertex>) -> QuadVarying {
     QuadVarying {
         pos: input.pos,
         color: input.color,
@@ -53,10 +40,13 @@ fn vertex(input: QuadVertex, locals: Locals) -> QuadVarying {
 }
 
 #[inspirv(entry_point = "fragment")]
-fn fragment(input: QuadVarying, fragment: QuadFragment) -> QuadOut {
-    let w = 800.0f32;
-    let h = 600.0f32;
+fn fragment(input: Attributes<QuadVarying>, fragment: Attributes<QuadFragment>, local: Cbuffer<Locals>) -> QuadOut {
+    let w = local.dimensions.x;
+    let h = local.dimensions.x;
     QuadOut {
-        color: Float4::new(fragment.coord.x / w, fragment.coord.y / h, 0.0f32, 1.0f32),
+        color: Float4::new(
+            fragment.coord.x / w,
+            fragment.coord.y / h,
+            0.0, 1.0),
     }
 }
