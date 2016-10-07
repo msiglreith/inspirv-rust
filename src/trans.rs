@@ -504,60 +504,56 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 match self.mir.return_ty.sty {
                     ty::TyAdt(adt, subs) => {
                         if let Some(ty_id) = self.mir.return_ty.ty_to_def_id() {
-                            let attrs = self.get_node_attributes(ty_id);
-                            let interface = attrs.iter().any(|attr| match *attr {
-                                Attribute::Interface => true,
-                                _ => false,
-                            });
+                            let interfaces = adt.struct_variant().fields.iter().map(|field| {
+                                let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs));
+                                let node_id = self.get_node_id(ty_id);
+                                let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
+                                let id = self.builder.define_variable(name.as_str(), ty.clone(),
+                                                             StorageClass::StorageClassOutput);
 
-                            if interface {
-                                let interfaces = adt.struct_variant().fields.iter().map(|field| {
-                                    let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs));
-                                    let node_id = self.get_node_id(ty_id);
-                                    let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
-                                    let id = self.builder.define_variable(name.as_str(), ty.clone(),
-                                                                 StorageClass::StorageClassOutput);
-
-                                    // HELP! A nicer way to get the attributes?
-                                    // Get struct field attributes
-                                    let node = self.tcx.map.get(node_id);
-                                    let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
-                                    let field_attrs = {
-                                        if let hir::map::Node::NodeItem(item) = node {
-                                            if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
-                                                let field = variant_data.fields().iter()
-                                                                        .find(|field| field.id == field_id)
-                                                                        .expect("Unable to find struct field by id");
-                                                attribute::parse(self.tcx.sess, &*field.attrs)
-                                            } else {
-                                                bug!("Struct item node should be a struct {:?}", item.node)
-                                            }
+                                // HELP! A nicer way to get the attributes?
+                                // Get struct field attributes
+                                let node = self.tcx.map.get(node_id);
+                                let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
+                                let field_attrs = {
+                                    if let hir::map::Node::NodeItem(item) = node {
+                                        if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
+                                            let field = variant_data.fields().iter()
+                                                                    .find(|field| field.id == field_id)
+                                                                    .expect("Unable to find struct field by id");
+                                            attribute::parse(self.tcx.sess, &*field.attrs)
                                         } else {
-                                            bug!("Struct node should be a NodeItem {:?}", node)
+                                            bug!("Struct item node should be a struct {:?}", item.node)
                                         }
-                                    };
-
-                                    for attr in field_attrs {
-                                        match attr {
-                                            Attribute::Location { location } => {
-                                                self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
-                                            }
-                                            // Rust doesn't allow attributes associated with `type foo = bar` /:
-                                            Attribute::Builtin { builtin } => {
-                                                // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
-                                                self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
-                                            }
-                                            _ => ()
-                                        }
+                                    } else {
+                                        bug!("Struct node should be a NodeItem {:?}", node)
                                     }
+                                };
 
-                                    interface_ids.push(id);
-                                    (id, ty)
-                                }).collect::<Vec<_>>();
-                                self.return_ids = Some(FuncReturn::Interface(interfaces));
-                            } else {
-                                bug!("Output argument type requires interface attribute({:?})", self.mir.return_ty)
-                            }
+                                let mut attribute_loc = None;
+
+                                for attr in field_attrs {
+                                    match attr {
+                                        Attribute::Location { location } => { attribute_loc = Some(location); }
+                                        // Rust doesn't allow attributes associated with `type foo = bar` /:
+                                        Attribute::Builtin { builtin } => {
+                                            // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
+                                            self.builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
+                                        }
+                                        _ => ()
+                                    }
+                                }
+
+                                if let Some(location) = attribute_loc {
+                                    self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
+                                } else {
+                                    bug!("Output argument type field requires a location attribute ({:?})", self.mir.return_ty)
+                                }
+
+                                interface_ids.push(id);
+                                (id, ty)
+                            }).collect::<Vec<_>>();
+                            self.return_ids = Some(FuncReturn::Interface(interfaces));
                         } else {
                             bug!("Output argument type not defined in local crate({:?})", self.mir.return_ty)
                         }

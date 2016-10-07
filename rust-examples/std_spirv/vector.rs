@@ -41,7 +41,6 @@ impl Add<Float2> for Float2 {
     fn add(self, _rhs: Float2) -> Self::Output { loop {} }
 }
 
-
 impl AddAssign<Float2> for Float2 {
     #[inline]
     fn add_assign(&mut self, rhs: Float2) {
