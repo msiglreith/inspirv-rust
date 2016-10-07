@@ -1,6 +1,7 @@
 
 use std_spirv::ops::Deref;
 
+#[inspirv(interface)]
 pub struct Attributes<T>(T);
 
 impl<T> Deref for Attributes<T> {
@@ -12,6 +13,7 @@ impl<T> Deref for Attributes<T> {
     }
 }
 
+#[inspirv(const_buffer)]
 pub struct Cbuffer<T>(T);
 
 impl<T> Deref for Cbuffer<T> {
