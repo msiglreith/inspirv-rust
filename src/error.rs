@@ -1,14 +1,16 @@
-error_chain! {
-    types {
-        Error, ErrorKind, ChainErr, Result;
+
+use syntax_pos::MultiSpan;
+use rustc_errors::DiagnosticBuilder;
+
+pub type PResult<'a, T> = Result<T, DiagnosticBuilder<'a>>;
+
+pub trait DiagnosticBuilderExt {
+    fn set_span<S: Into<MultiSpan>>(self, sp: S) -> Self;
+}
+
+impl<'a> DiagnosticBuilderExt for DiagnosticBuilder<'a> {
+    fn set_span<S: Into<MultiSpan>>(mut self, sp: S) -> Self {
+        self.span = sp.into();
+        self
     }
-
-    links { }
-
-    foreign_links {
-        ::std::io::Error, IoError,
-        "I/O error";
-    }
-
-    errors { }
 }

@@ -2,6 +2,7 @@
 use rustc::mir::repr::*;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::ConstInt;
+use syntax::parse::PResult;
 use trans::{InspirvBlock, SpirvOperand, SpirvLvalue};
 use inspirv::types::*;
 use inspirv::core::instruction::*;
@@ -31,9 +32,9 @@ pub enum Intrinsic {
 }
 
 impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
-    pub fn emit_intrinsic(&mut self, intrinsic: &Intrinsic, args: &[Operand<'tcx>]) -> Id {
+    pub fn emit_intrinsic(&mut self, intrinsic: &Intrinsic, args: &[Operand<'tcx>]) -> PResult<'v, Id> {
         use self::Intrinsic::*;
-        let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<Vec<_>>();
+        let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<PResult<Vec<_>>>()?;
         let component_ids = args_ops.iter().filter_map(
                                 |arg| match *arg {
                                     SpirvOperand::Constant(c, _) => Some(c),
@@ -83,7 +84,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                             ],
                         )
                     );
-                    result_id
+                    Ok(result_id)
                 } else {
                     panic!("Unhandled dynamic `shuffle4`")
                 }
@@ -101,7 +102,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    fn emit_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         assert!(num_output_components as usize + 1 == component_ids.len());
         let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: num_output_components as u32 };
         if args_ops[1..].iter().all(|arg| arg.is_constant()) {
@@ -124,13 +125,13 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     components
                 )
             );
-            result_id
+            Ok(result_id)
         } else {
             panic!("Unhandled dynamic swizzle!")
         }
     }
 
-    fn emit_vector_new(&mut self, num_components: &[u32], args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_vector_new(&mut self, num_components: &[u32], args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         assert!(num_components.len() == component_ids.len());
         let out_components = num_components.iter().fold(0, |acc, &x| acc + x);
         let base_ty = Type::Float(32);
@@ -138,7 +139,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         if args.iter().all(|arg| arg.is_constant()) && num_components.iter().all(|num| *num == 1) {
             // all args are scalar constants!
             let constant = module::Constant::Composite(ty, component_ids);
-            self.ctxt.builder.define_constant(constant)
+            Ok(self.ctxt.builder.define_constant(constant))
         } else {
             let scalar_ids = {
                 num_components
@@ -168,12 +169,12 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             self.block.emit_instruction(
                 OpCompositeConstruct(self.ctxt.builder.define_type(&ty), composite_id, scalar_ids)
             );
-            composite_id
+            Ok(composite_id)
         }
     }
 
     // Addition for non-standard types (vector)
-    fn emit_add(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_add(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         use trans::SpirvOperand::*;
         use trans::SpirvLvalue::*;
         use trans::SpirvType::*;
@@ -219,11 +220,11 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             _ => { bug!("{:?}", (left_ty, right_ty)); }
         }
         
-        result_id
+        Ok(result_id)
     }
 
     // Substraction for non-standard types (vector)
-    fn emit_sub(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_sub(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         use trans::SpirvOperand::*;
         use trans::SpirvLvalue::*;
         use trans::SpirvType::*;
@@ -255,11 +256,11 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             _ => { bug!("{:?}", (left_ty, right_ty)); }
         }
         
-        result_id
+        Ok(result_id)
     }
 
     // Multiplication for non-standard types (matrix and vector)
-    fn emit_mul(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_mul(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         use trans::SpirvOperand::*;
         use trans::SpirvLvalue::*;
         use trans::SpirvType::*;
@@ -329,10 +330,10 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
             _ => { bug!("{:?}", (left_ty, right_ty)); }
         }
         
-        result_id
+        Ok(result_id)
     }
 
-    fn emit_transpose(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_transpose(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         // expect a matrix type
         let result_ty = {
             use trans::SpirvOperand::*;
@@ -349,10 +350,10 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         self.block.emit_instruction(
             OpTranspose(self.ctxt.builder.define_type(&result_ty), result_id, component_ids[0])
         );
-        result_id
+        Ok(result_id)
     }
 
-    fn emit_inverse(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_inverse(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         // expect a matrix type
         let result_ty = {
             use trans::SpirvOperand::*;
@@ -368,10 +369,10 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         let result_id = self.ctxt.builder.alloc_id();
         let ext_glsl = self.ctxt.builder.import_extension("GLSL.std.450");
         self.block.emit_glsl_instruction(ext_glsl, glsl::OpCode::MatrixInverse, result_id, self.ctxt.builder.define_type(&result_ty), vec![component_ids[0]]);
-        result_id
+        Ok(result_id)
     }
 
-    fn emit_normalize(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_normalize(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         // expect a vector type
         let result_ty = {
             use trans::SpirvOperand::*;
@@ -387,10 +388,10 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         let result_id = self.ctxt.builder.alloc_id();
         let ext_glsl = self.ctxt.builder.import_extension("GLSL.std.450");
         self.block.emit_glsl_instruction(ext_glsl, glsl::OpCode::Normalize, result_id, self.ctxt.builder.define_type(&result_ty), vec![component_ids[0]]);
-        result_id
+        Ok(result_id)
     }
 
-    fn emit_cross(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_cross(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         // expect a vec3 type
         use trans::SpirvOperand::*;
         use trans::SpirvLvalue::*;
@@ -417,10 +418,10 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         let result_id = self.ctxt.builder.alloc_id();
         let ext_glsl = self.ctxt.builder.import_extension("GLSL.std.450");
         self.block.emit_glsl_instruction(ext_glsl, glsl::OpCode::Cross, result_id, self.ctxt.builder.define_type(&left_ty), vec![component_ids[0], component_ids[1]]);
-        result_id
+        Ok(result_id)
     }
 
-    fn emit_outer_product(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> Id {
+    fn emit_outer_product(&mut self, args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'v, Id> {
         // expect a vector type
         use trans::SpirvOperand::*;
         use trans::SpirvLvalue::*;
@@ -448,7 +449,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         self.block.emit_instruction(
             OpOuterProduct(self.ctxt.builder.define_type(&left_ty), result_id, component_ids[0], component_ids[1])
         );
-        result_id
+        Ok(result_id)
     }
 }
 

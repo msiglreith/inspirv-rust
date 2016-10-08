@@ -6,6 +6,7 @@ use syntax::ast::{LitKind, LitIntType, MetaItemKind, NestedMetaItemKind};
 use inspirv::core::enumeration::*;
 use inspirv_builder::module::Type;
 use intrinsic::Intrinsic;
+use error::{PResult, DiagnosticBuilderExt};
 
 #[derive(Clone, Debug)]
 pub enum Attribute {
@@ -38,7 +39,7 @@ pub enum Attribute {
     },
 }
 
-pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attribute> {
+pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> PResult<'a, Vec<Attribute>> {
     let mut attrs = Vec::new();
 
     for attr in ast_attribs {
@@ -58,35 +59,25 @@ pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attr
                         MetaItemKind::NameValue(ref name, ref value) => {
                             match &**name {
                                 "entry_point" => {
-                                    let stage = execution_model_from_str(&*extract_attr_str(value));
-                                    if let Some(stage) = stage {
-                                        attrs.push(Attribute::EntryPoint {
-                                            stage: stage,
-                                            execution_modes: HashMap::new(),
-                                        });
-                                    } else {
-                                        sess.span_err(item.span, "Unknown `inspirv` entry_point execution model");
-                                    }
-                                },
+                                    let stage = execution_model_from_str(sess, &*extract_attr_str(value)).map_err(|mut err| err.set_span(value.span) )?;
+                                    attrs.push(Attribute::EntryPoint {
+                                        stage: stage,
+                                        execution_modes: HashMap::new(),
+                                    });
+                                }
                                 "location" => {
                                     match value.node {
                                         LitKind::Int(b, LitIntType::Unsigned(..))
                                         | LitKind::Int(b, LitIntType::Unsuffixed) => attrs.push(Attribute::Location { location: b }),
-                                        _ => panic!("attribute value need to be valid unsigned interger"),
+                                        _ => return Err(sess.struct_span_err(value.span, "Inspirv: Location value must be an integer")),
                                     };
                                 },
                                 "builtin" => {
-                                    let builtin = builtin_from_str(&*extract_attr_str(value));
-                                    if let Some(builtin) = builtin {
-                                        attrs.push(Attribute::Builtin { builtin: builtin });
-                                    } else {
-                                        sess.span_err(item.span, "Unknown `inspirv` builtin variable");
-                                    }
+                                    let builtin = builtin_from_str(sess, &*extract_attr_str(value)).map_err(|mut err| { err.set_span(value.span) } )?;
+                                    attrs.push(Attribute::Builtin { builtin: builtin });
                                 },
 
-                                _ => {
-                                    sess.span_err(item.span, "Unknown `inspirv` attribute name value item")
-                                }
+                                _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown attribute item")),
                             }
                         },
                         MetaItemKind::Word(ref name) => {
@@ -404,58 +395,58 @@ pub fn parse(sess: &Session, ast_attribs: &[syntax::ast::Attribute]) -> Vec<Attr
         }
     }
 
-    attrs
+    Ok(attrs)
 }
 
-fn execution_model_from_str(name: &str) -> Option<ExecutionModel> {
+fn execution_model_from_str<'a>(sess: &'a Session, name: &str) -> PResult<'a, ExecutionModel> {
     use inspirv::core::enumeration::ExecutionModel::*;
     match name {
-        "vertex" => Some(ExecutionModelVertex),
-        "tessellation_control" => Some(ExecutionModelTessellationControl),
-        "tessellation_eval" => Some(ExecutionModelTessellationEvaluation),
-        "geometry" => Some(ExecutionModelGeometry),
-        "fragment" => Some(ExecutionModelFragment),
-        "compute" => Some(ExecutionModelGLCompute),
-        "kernel" => Some(ExecutionModelKernel),
-        _ => None,
+        "vertex" => Ok(ExecutionModelVertex),
+        "tessellation_control" => Ok(ExecutionModelTessellationControl),
+        "tessellation_eval" => Ok(ExecutionModelTessellationEvaluation),
+        "geometry" => Ok(ExecutionModelGeometry),
+        "fragment" => Ok(ExecutionModelFragment),
+        "compute" => Ok(ExecutionModelGLCompute),
+        "kernel" => Ok(ExecutionModelKernel),
+        _ => Err(sess.struct_err("Inspirv: Unknown execution model")),
     }
 }
 
-fn builtin_from_str(name: &str) -> Option<BuiltIn> {
+fn builtin_from_str<'a>(sess: &'a Session, name: &str) -> PResult<'a, BuiltIn> {
     use inspirv::core::enumeration::BuiltIn::*;
     match name {
         // Should be all possible builtIn's for shaders 
-        "Position" => Some(BuiltInPosition),
-        "PointSize" => Some(BuiltInPointSize),
-        "ClipDistance" => Some(BuiltInClipDistance),
-        "CullDistance" => Some(BuiltInCullDistance),
-        "VertexId" => Some(BuiltInVertexId),
-        "InstanceId" => Some(BuiltInInstanceId),
-        "PrimitiveId" => Some(BuiltInPrimitiveId),
-        "Layer" => Some(BuiltInLayer),
-        "InvocationId" => Some(BuiltInInvocationId),
-        "ViewportIndex" => Some(BuiltInViewportIndex),
-        "TessLevelOuter" => Some(BuiltInTessLevelOuter),
-        "TessLevelInner" => Some(BuiltInTessLevelInner),
-        "TessCoord" => Some(BuiltInTessCoord),
-        "PatchVertices" => Some(BuiltInPatchVertices),
-        "FragCoord" => Some(BuiltInFragCoord),
-        "PointCoord" => Some(BuiltInPointCoord),
-        "FrontFacing" => Some(BuiltInFrontFacing),
-        "SampleId" => Some(BuiltInSampleId),
-        "SamplePosition" => Some(BuiltInSamplePosition),
-        "SampleMask" => Some(BuiltInSampleMask),
-        "FragDepth" => Some(BuiltInFragDepth),
-        "HelperInvocation" => Some(BuiltInHelperInvocation),
-        "NumWorkgroups" => Some(BuiltInNumWorkgroups),
-        "WorkgroupSize" => Some(BuiltInWorkgroupSize),
-        "WorkgroupId" => Some(BuiltInWorkgroupId),
-        "LocalInvocationId" => Some(BuiltInLocalInvocationId),
-        "GlobalInvocationId" => Some(BuiltInGlobalInvocationId),
-        "LocalInvocationIndex" => Some(BuiltInLocalInvocationIndex),
-        "VertexIndex" => Some(BuiltInVertexIndex),
-        "InstanceIndex" => Some(BuiltInInstanceIndex),
-        _ => None,
+        "Position" => Ok(BuiltInPosition),
+        "PointSize" => Ok(BuiltInPointSize),
+        "ClipDistance" => Ok(BuiltInClipDistance),
+        "CullDistance" => Ok(BuiltInCullDistance),
+        "VertexId" => Ok(BuiltInVertexId),
+        "InstanceId" => Ok(BuiltInInstanceId),
+        "PrimitiveId" => Ok(BuiltInPrimitiveId),
+        "Layer" => Ok(BuiltInLayer),
+        "InvocationId" => Ok(BuiltInInvocationId),
+        "ViewportIndex" => Ok(BuiltInViewportIndex),
+        "TessLevelOuter" => Ok(BuiltInTessLevelOuter),
+        "TessLevelInner" => Ok(BuiltInTessLevelInner),
+        "TessCoord" => Ok(BuiltInTessCoord),
+        "PatchVertices" => Ok(BuiltInPatchVertices),
+        "FragCoord" => Ok(BuiltInFragCoord),
+        "PointCoord" => Ok(BuiltInPointCoord),
+        "FrontFacing" => Ok(BuiltInFrontFacing),
+        "SampleId" => Ok(BuiltInSampleId),
+        "SamplePosition" => Ok(BuiltInSamplePosition),
+        "SampleMask" => Ok(BuiltInSampleMask),
+        "FragDepth" => Ok(BuiltInFragDepth),
+        "HelperInvocation" => Ok(BuiltInHelperInvocation),
+        "NumWorkgroups" => Ok(BuiltInNumWorkgroups),
+        "WorkgroupSize" => Ok(BuiltInWorkgroupSize),
+        "WorkgroupId" => Ok(BuiltInWorkgroupId),
+        "LocalInvocationId" => Ok(BuiltInLocalInvocationId),
+        "GlobalInvocationId" => Ok(BuiltInGlobalInvocationId),
+        "LocalInvocationIndex" => Ok(BuiltInLocalInvocationIndex),
+        "VertexIndex" => Ok(BuiltInVertexIndex),
+        "InstanceIndex" => Ok(BuiltInInstanceIndex),
+        _ => Err(sess.struct_err("Inspirv: Unknown builtin")),
     }
 }
 

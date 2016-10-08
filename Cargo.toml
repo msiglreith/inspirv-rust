@@ -15,7 +15,6 @@ doc = false
 name = "inspirv-rust"
 
 [dependencies]
-error-chain = "0.1.9"
 log = "0.3.6"
 env_logger = "0.3.3"
 libc = "0.2"
