@@ -308,13 +308,13 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 );
             }
 
-            (&Type::Matrix { ref base, rows, cols }, ref ty) if **ty == **base => {
+            (&Type::Matrix { ref base, .. }, ty) if *ty == **base => {
                self.block.emit_instruction(
                     OpMatrixTimesScalar(self.ctxt.builder.define_type(ty), result_id, component_ids[0], component_ids[1])
                 ); 
             }
 
-            (ref ty, &Type::Matrix { ref base, rows, cols }) if **ty == **base => {
+            (ty, &Type::Matrix { ref base, .. }) if *ty == **base => {
                 self.block.emit_instruction(
                     OpMatrixTimesScalar(self.ctxt.builder.define_type(ty), result_id, component_ids[1], component_ids[0])
                 );

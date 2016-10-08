@@ -5,7 +5,7 @@ use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::{ConstInt, ConstFloat};
-use rustc::ty::{self, Slice, TyCtxt, Ty, VariantKind};
+use rustc::ty::{self, TyCtxt, Ty, VariantKind};
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::util::common::time;
@@ -236,7 +236,7 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 return_ids: None,
             };
 
-            let mut result = match src {
+            let result = match src {
                 MirSource::Const(_) => fn_ctxt.trans_const(),
                 MirSource::Fn(_) => fn_ctxt.trans_fn(FnTrans::OnlyPublic),
                 MirSource::Static(_, mutability) => fn_ctxt.trans_static(mutability),
@@ -246,7 +246,13 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 }
             };
 
-            result.map_err(|mut err| err.emit());
+            match result {
+                Ok(_) => {}
+                Err(mut err) => {
+                    err.emit();
+                    return;
+                }
+            }
         }
 
         let out_file = File::create("example.spv").unwrap();
@@ -275,7 +281,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
         let return_ty = self.rust_ty_to_spirv_ref(self.mir.return_ty)?;
         if return_ty.is_ref() {
-            bug!("References as return type are currently unsupported ({:?})", self.mir.return_ty)
+            return Err(self.tcx.sess.struct_err("Inspirv: References as return type are currently unsupported"));
         }
         self.return_ids = if let Type::Void = *return_ty.ty() {
             None
@@ -296,7 +302,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         self.trans(const_fn)
     }
 
-    fn trans_fn<'a>(&'a mut self, translation_mode: FnTrans) -> PResult<'a, ()> {
+    fn trans_fn(&mut self, translation_mode: FnTrans) -> PResult<()> {
         let did = self.def_id;
         let type_scheme = self.tcx.lookup_item_type(did);
 
@@ -347,6 +353,8 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             let mut interface_ids = Vec::new(); // entry points
             let mut params = Vec::new(); // `normal` function
 
+            let mut err = None;
+
             // Extract all arguments and store their ids in a list for faster access later
             // Arguments as Input interface if the structs have to corresponding annotations
             for (i, arg) in self.mir.local_decls.iter().enumerate() {
@@ -374,10 +382,9 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         if let ty::TyAdt(adt, subs) = arg.ty.sty {
                             // unwrap wrapper type!
                             let struct_ty = adt.struct_variant().fields[0].ty(*self.tcx, subs);
-                            let struct_ty_id = struct_ty.ty_to_def_id().unwrap();
                             if let ty::TyAdt(adt, subs) = struct_ty.sty {
-                                let mut interfaces = Vec::new();
-                                for field in adt.struct_variant().fields.iter() {
+                                let struct_ty_id = struct_ty.ty_to_def_id().unwrap();
+                                let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                     let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs))?;
                                     let node_id = self.get_node_id(struct_ty_id);
                                     let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
@@ -394,7 +401,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                                 let field = variant_data.fields().iter()
                                                                         .find(|field| field.id == field_id)
                                                                         .expect("Unable to find struct field by id");
-                                                try!(attribute::parse(self.tcx.sess, &*field.attrs))
+                                                attribute::parse(self.tcx.sess, &*field.attrs)?
                                             } else {
                                                 bug!("Struct item node should be a struct {:?}", item.node)
                                             }
@@ -418,22 +425,22 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                     }
 
                                     interface_ids.push(id);
-                                    interfaces.push((id, ty));
-                                }
+                                    Ok((id, ty))
+                                }).collect::<PResult<Vec<_>>>()?;
 
                                 self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
                             } else {
-                                bug!("Input argument inner type requires to be an struct type ({:?})", struct_ty)
+                                err = Some(self.tcx.sess.struct_err("Input argument inner type requires to be an struct type"));
                             }
                         } else {
-                            bug!("Input argument type requires to be an interface struct type ({:?})", arg.ty)
+                            err = Some(self.tcx.sess.struct_err("Input argument inner type requires to be an struct type"));
                         }
                     } else if const_buffer {
                         if let ty::TyAdt(adt, subs) = arg.ty.sty {
                             // unwrap wrapper type!
                             let struct_ty = adt.struct_variant().fields[0].ty(*self.tcx, subs);
                             let struct_ty_id = struct_ty.ty_to_def_id().unwrap();
-                            if let ty::TyAdt(adt, subs) = struct_ty.sty {
+                            if let ty::TyAdt(adt, _subs) = struct_ty.sty {
                                 let ty = self.rust_ty_to_spirv(struct_ty)?;
                                 let node_id = self.get_node_id(struct_ty_id);
                                 let ty_id = self.builder.define_named_type(&ty, &*self.tcx.map.name(node_id).as_str());
@@ -447,7 +454,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
                                 let fields = if let Type::Struct(fields) = ty { fields } else { bug!("cbuffer not a struct!") };
                                 let mut offset = 0;
-                                for (member, ref field) in fields.iter().enumerate() {
+                                for (member, field) in fields.iter().enumerate() {
                                     let unalignment = offset % field.alignment();
                                     if unalignment != 0 {
                                         offset += field.alignment() - unalignment;
@@ -458,24 +465,21 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                 }
 
                                 for attr in attrs {
-                                    match attr {
-                                        Attribute::Descriptor { set, binding } => {
-                                            self.builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
-                                            self.builder.add_decoration(id, Decoration::DecorationBinding(LiteralInteger(binding as u32)));
-                                        }
-                                        _ => ()
+                                    if let Attribute::Descriptor { set, binding } = attr {
+                                        self.builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
+                                        self.builder.add_decoration(id, Decoration::DecorationBinding(LiteralInteger(binding as u32)));
                                     }
                                 }
                             } else {
-                                bug!("Const buffer argument inner type requires to be struct type ({:?})", arg.ty)
+                                err = Some(self.tcx.sess.struct_err("Const buffer argument inner type requires to be struct type"));
                             }
                         } else {
-                            bug!("Const buffer argument type requires to be cbuffer struct type ({:?})", arg.ty)
+                            err = Some(self.tcx.sess.struct_err("Const buffer argument type requires to be cbuffer struct type"));
                         }
                     } else if entry_point.is_some() {
                         // Entrypoint functions don't have actual input/output parameters
                         // We use them for the shader interface and const buffers
-                        bug!("Input argument type requires interface or const_buffer attribute({:?})", arg.ty)
+                        err = Some(self.tcx.sess.struct_err("Input argument type requires interface or cbuffer attribute"));
                     } else {
                         let id = self.builder.alloc_id();
                         let ty = self.rust_ty_to_spirv_ref(arg.ty)?;
@@ -488,7 +492,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
                     }
                 } else if entry_point.is_some() {
-                    bug!("Argument type not defined in local crate({:?})", arg.ty)
+                    err = Some(self.tcx.sess.struct_err("Argument type not defined in local crate"));
                 } else {
                     //
                     let id = self.builder.alloc_id();
@@ -500,20 +504,27 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     params.push(arg);
                     self.builder.name_id(id, &*name); // TODO: hide this behind a function module interface
                     self.arg_ids.push(Some(FuncArg::Argument((id, ty))));
-                }                
+                }
+
+                if let Some(mut err) = err {
+                    if let Some(source) = arg.source_info { err.set_span(source.span); }
+                    else { err.set_span(self.mir.span); }
+                    return Err(err)
+                }             
             }
 
-            // Return type
+            // Return type and function creation
             //
             // Entry Point Handling:
             //  These functions don't have actual input/output parameters
             //  We use them for the shader interface and uniforms
-            if let Some(&Attribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
+            let ref return_ptr = self.mir.local_decls[Local::new(0)];
+            let mut err = None;
+            let func = if let Some(&Attribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
                 match self.mir.return_ty.sty {
                     ty::TyAdt(adt, subs) => {
                         if let Some(ty_id) = self.mir.return_ty.ty_to_def_id() {
-                            let mut interfaces = Vec::new();
-                            for field in adt.struct_variant().fields.iter() {
+                            let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                 let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs))?;
                                 let node_id = self.get_node_id(ty_id);
                                 let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
@@ -530,7 +541,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                             let field = variant_data.fields().iter()
                                                                     .find(|field| field.id == field_id)
                                                                     .expect("Unable to find struct field by id");
-                                            try!(attribute::parse(self.tcx.sess, &*field.attrs))
+                                            attribute::parse(self.tcx.sess, &*field.attrs)?
                                         } else {
                                             bug!("Struct item node should be a struct {:?}", item.node)
                                         }
@@ -560,17 +571,15 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                 }
 
                                 interface_ids.push(id);
-                                interfaces.push((id, ty));
-                            }
+                                Ok((id, ty))
+                            }).collect::<PResult<Vec<_>>>()?;
                             self.return_ids = Some(FuncReturn::Interface(interfaces));
                         } else {
-                            bug!("Output argument type not defined in local crate({:?})", self.mir.return_ty)
+                            err = Some(self.tcx.sess.struct_err("Output argument type not defined in local crate"));
                         }
-                    },
-
+                    }
                     ty::TyTuple(tys) if tys.is_empty() => self.return_ids = None, // MIR doesn't use void(!) instead the () type for some reason \o/
-
-                    _ => bug!("Output argument type requires to be a struct type or empty ({:?})", self.mir.return_ty)
+                    _ => { err = Some(self.tcx.sess.struct_err("Output argument type requires to be a struct type or empty")); }
                 }
 
                 //
@@ -591,7 +600,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 // Standard function
                 let mut func = self.builder.define_function_named(fn_name);
 
-                func.params = params; // TODO: remove references
+                func.params = params;
 
                 let return_ty = self.rust_ty_to_spirv_ref(self.mir.return_ty)?;
                 if let SpirvType::Ref{ mutable: true, .. } = return_ty {
@@ -611,7 +620,14 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
                 func.ret_ty = return_ty.into();
                 func
+            };
+
+            if let Some(mut err) = err {
+                if let Some(source) = return_ptr.source_info { err.set_span(source.span); }
+                return Err(err)
             }
+
+            func  
         };
 
         println!("{:?}", (self.node_id, self.tcx.map.name(self.node_id).as_str(), self.mir));
@@ -629,7 +645,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 }
                 let id = self.builder.alloc_id();
                 let ty = self.rust_ty_to_spirv_ref(local.ty)?;
-                if let &Type::Void = ty.ty() {
+                if let Type::Void = *ty.ty() {
                     ids.push(None);
                 } else {
                     let local_var = LocalVar {
@@ -1074,7 +1090,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                                     (SpirvOperand::Constant(left_id, left_ty),
                                      SpirvOperand::Constant(right_id, right_ty)) => {
-                                        self.emit_binop(*op, (lvalue_id, lvalue_ty), (left_id, left_ty), (right_id, right_ty));
+                                        self.emit_binop(*op, (lvalue_id, lvalue_ty), (left_id, left_ty), (right_id, right_ty))?;
                                     }
 
                                     // TODO:

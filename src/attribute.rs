@@ -59,7 +59,7 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                         MetaItemKind::NameValue(ref name, ref value) => {
                             match &**name {
                                 "entry_point" => {
-                                    let stage = execution_model_from_str(sess, &*extract_attr_str(value)).map_err(|mut err| err.set_span(value.span) )?;
+                                    let stage = execution_model_from_str(sess, &*extract_attr_str(value)).map_err(|err| err.set_span(value.span) )?;
                                     attrs.push(Attribute::EntryPoint {
                                         stage: stage,
                                         execution_modes: HashMap::new(),
@@ -73,7 +73,7 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                     };
                                 },
                                 "builtin" => {
-                                    let builtin = builtin_from_str(sess, &*extract_attr_str(value)).map_err(|mut err| { err.set_span(value.span) } )?;
+                                    let builtin = builtin_from_str(sess, &*extract_attr_str(value)).map_err(|err| { err.set_span(value.span) } )?;
                                     attrs.push(Attribute::Builtin { builtin: builtin });
                                 },
 
@@ -85,7 +85,7 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                 "compiler_builtin" => attrs.push(Attribute::CompilerBuiltin),
                                 "interface" => attrs.push(Attribute::Interface),
                                 "const_buffer" => attrs.push(Attribute::ConstBuffer),
-                                _ => sess.span_err(item.span, "Unknown `inspirv`attribute word item"),
+                                _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown attribute item")),
                             }
                         },
                         MetaItemKind::List(ref name, ref items) => {
@@ -102,7 +102,7 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                             "components" => {
                                                                 components = match value.node {
                                                                     syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
-                                                                    _ => panic!("attribute value needs to be interger (>2)"),
+                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: vector component value must be an integer (>2)")),
                                                                 }
                                                             }
                                                             "base" => {
@@ -110,29 +110,21 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                                     "bool" => Some(Type::Bool),
                                                                     "f32" => Some(Type::Float(32)),
                                                                     "f64" => Some(Type::Float(64)),
-
-                                                                    _ => {
-                                                                        sess.span_err(item.span, "Unsupported `inspirv` vector base type");
-                                                                        None
-                                                                    }
+                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: Unsupported vector base type")),
                                                                 }
                                                             }
-                                                            _ => sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
+                                                            _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown vector attribute item")),
                                                         }
                                                     }
-                                                    _ => sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
+                                                    _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown vector attribute item")),
                                                 }
                                             }
-                                            _ => sess.span_err(item.span, "Unknown `inspirv` vector attribute item"),
+                                            _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown vector attribute item")),
                                         }
                                     }
 
                                     if base.is_none() || components.is_none() {
-                                        sess.span_err(item.span,
-                                                               "`inspirv` vector \
-                                                                misses `base` or \
-                                                                `component` \
-                                                                attributes");
+                                        return Err(sess.struct_span_err(item.span, "Inspirv: vector misses `base` or `component` attributes"));
                                     } else {
                                         attrs.push(Attribute::Vector { 
                                             base: Box::new(base.unwrap()),
@@ -154,13 +146,13 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                             "rows" => {
                                                                 rows = match value.node {
                                                                     syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
-                                                                    _ => panic!("attribute value needs to be interger (>2)"),
+                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: matrix rows value must be an integer (>2)")),
                                                                 }
                                                             }
                                                             "cols" => {
                                                                 cols = match value.node {
                                                                     syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
-                                                                    _ => panic!("attribute value needs to be interger (>2)"),
+                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: matrix cols value must be an integer (>2)")),
                                                                 }
                                                             }
                                                             "base" => {
@@ -168,25 +160,21 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                                     "bool" => Some(Type::Bool),
                                                                     "f32" => Some(Type::Float(32)),
                                                                     "f64" => Some(Type::Float(64)),
-
-                                                                    _ => {
-                                                                        sess.span_err(item.span, "Unsupported `inspirv` matrix base type");
-                                                                        None
-                                                                    }
+                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: Unsupported matrix base type")),
                                                                 }
                                                             }
-                                                            _ => sess.span_err(item.span, "Unknown `inspirv` matrix attribute item"),
+                                                            _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown matrix attribute item")),
                                                         }
                                                     }
-                                                    _ => sess.span_err(item.span, "Unknown `inspirv` matrix attribute item"),
+                                                    _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown matrix attribute item")),
                                                 }
                                             }
-                                            _ => sess.span_err(item.span, "Unknown `inspirv` matrix attribute item"),
+                                            _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown matrix attribute item")),
                                         }
                                     }
 
                                     if base.is_none() || rows.is_none() || cols.is_none() {
-                                        sess.span_err(item.span, "`inspirv` matrix misses `base`, `rows` or `component` attributes");
+                                        return Err(sess.struct_span_err(item.span, "Inspirv: matrix misses `base`, `rows` or `cols` attributes"));
                                     } else {
                                         attrs.push(Attribute::Matrix { 
                                             base: Box::new(base.unwrap()),
@@ -208,23 +196,22 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                             "set" => {
                                                                 set = match value.node {
                                                                     syntax::ast::LitKind::Int(b, _) => Some(b),
-                                                                    _ => panic!("attribute value needs to be interger"),
+                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: descriptor set value must be an integer")),
                                                                 }
-                                                            },
+                                                            }
                                                             "binding" => {
                                                                 binding = match value.node {
                                                                     syntax::ast::LitKind::Int(b, _) => Some(b),
-                                                                    _ => panic!("attribute value needs to be interger"),
+                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: descriptor binding value value must be an integer")),
                                                                 }
-                                                            },
-
-                                                            _ => sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
+                                                            }
+                                                            _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown descriptor attribute item")),
                                                         }
                                                     }
-                                                    _ => sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
+                                                    _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown descriptor attribute item")),
                                                 }
                                             }
-                                            _ => sess.span_err(item.span, "Unknown `inspirv` descriptor attribute item"),
+                                            _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown descriptor attribute item")),
                                         }
                                     }
 
@@ -358,7 +345,7 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                                 sess.span_err(item.span, "`inspirv` vector_new misses components attributes");
                                                             }
                                                         }
-                                                        _ => sess.span_err(item.span, "Unknown `inspirv` intrinsic"),
+                                                        _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown intrinsic")),
                                                     } 
                                                 }
                                                 MetaItemKind::Word(ref name) => {
@@ -379,18 +366,18 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
 
                                                     attrs.push(Attribute::Intrinsic(intrinsic));
                                                 }
-                                                _ => sess.span_err(item.span, "Unknown `inspirv` intrinsic attribute item"),
+                                                _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown intrinsic attribute item")),
                                             }
                                         }
-                                        _ => sess.span_err(items[0].span, "Unknown `inspirv` intrinsic attribute item"),
+                                        _ => return Err(sess.struct_span_err(items[0].span, "Inspirv: Unknown attribute item")),
                                     }
                                 }
-                                _ => sess.span_err(item.span, "Unknown `inspirv` attribute list item"),
+                                _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown attribute item")),
                             }  
                         },
                     }
                 },
-                _ => sess.span_err(item.span, "Unknown `inspirv` attribute nested item."),
+                _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown attribute item")),
             }
         }
     }
