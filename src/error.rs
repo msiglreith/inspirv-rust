@@ -1,6 +1,7 @@
 
 use syntax_pos::MultiSpan;
 use rustc_errors::DiagnosticBuilder;
+pub use rustc_errors::Level;
 
 pub type PResult<'a, T> = Result<T, DiagnosticBuilder<'a>>;
 

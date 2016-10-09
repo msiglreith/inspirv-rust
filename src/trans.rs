@@ -268,13 +268,13 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     }
 }
 
-impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
-    fn trans_static(&mut self, mutability: hir::Mutability) -> PResult<'v, ()> {
+impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
+    fn trans_static(&'e mut self, mutability: hir::Mutability) -> PResult<'e, ()> {
         println!("{:?}", (self.node_id, mutability, self.mir));
         Ok(())
     }
 
-    fn trans_const(&mut self) -> PResult<'v, ()> {
+    fn trans_const(&'e mut self) -> PResult<'e, ()> {
         self.arg_ids = IndexVec::new();
 
         let const_name = &*self.tcx.map.name(self.node_id).as_str();
@@ -303,7 +303,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         self.trans(const_fn)
     }
 
-    fn trans_fn(&mut self, translation_mode: FnTrans) -> PResult<()> {
+    fn trans_fn(&'e mut self, translation_mode: FnTrans) -> PResult<'e, ()> {
         let did = self.def_id;
         let type_scheme = self.tcx.lookup_item_type(did);
 
@@ -431,10 +431,10 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
                                 self.arg_ids.push(Some(FuncArg::Interface(interfaces)));
                             } else {
-                                err = Some(self.tcx.sess.struct_err("Input argument inner type requires to be an struct type"));
+                                err = Some(self.tcx.sess.struct_err("Input argument inner type needs to be a struct type"));
                             }
                         } else {
-                            err = Some(self.tcx.sess.struct_err("Input argument inner type requires to be an struct type"));
+                            err = Some(self.tcx.sess.struct_err("Input argument inner type needs to be a struct type"));
                         }
                     } else if const_buffer {
                         if let ty::TyAdt(adt, subs) = arg.ty.sty {
@@ -475,7 +475,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                 err = Some(self.tcx.sess.struct_err("Const buffer argument inner type requires to be struct type"));
                             }
                         } else {
-                            err = Some(self.tcx.sess.struct_err("Const buffer argument type requires to be cbuffer struct type"));
+                            err = Some(self.tcx.sess.struct_err("Const buffer argument type requires to be struct type"));
                         }
                     } else if entry_point.is_some() {
                         // Entrypoint functions don't have actual input/output parameters
@@ -605,7 +605,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
                 let return_ty = self.rust_ty_to_spirv_ref(self.mir.return_ty)?;
                 if let SpirvType::Ref{ mutable: true, .. } = return_ty {
-                    bug!("Mutable references as return type are currently unsupported ({:?})", self.mir.return_ty)
+                    err = Some(self.tcx.sess.struct_err("Mutable references as return type are currently unsupported"));
                 }
                 self.return_ids = if let Type::Void = *return_ty.ty() {
                     None
@@ -636,7 +636,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         self.trans(fn_module)
     }
 
-    fn trans(&mut self, mut fn_module: inspirv_builder::Function) -> PResult<'v, ()> {
+    fn trans(&'e mut self, mut fn_module: inspirv_builder::Function) -> PResult<'e, ()> {
         // local variables and temporaries
         self.local_ids = {
             let mut ids: IndexVec<Local, Option<IdAndType>> = IndexVec::new();
@@ -680,10 +680,18 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             };
 
             for stmt in &bb.statements {
-                block_ctxt.trans_stmnt(stmt);
+                let result = block_ctxt.trans_stmnt(stmt);
+                if let Err(mut err) = result {
+                    err.emit();
+                    return Err(self.tcx.sess.struct_err("Error on resolving basic block"));
+                }
             }
 
-            block_ctxt.trans_terminator(&fn_module.ret_ty, bb.terminator());
+            let result = block_ctxt.trans_terminator(&fn_module.ret_ty, bb.terminator());
+            if let Err(mut err) = result {
+                err.emit();
+                return Err(self.tcx.sess.struct_err("Error on resolving terminator"));
+            }
         }
 
         // Push function and clear variable stack
@@ -695,7 +703,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     }
 
     // TODO: remove ugly clones if possible
-    fn resolve_lvalue(&mut self, lvalue: &Lvalue<'tcx>) -> PResult<'v, SpirvLvalue> {
+    fn resolve_lvalue(&mut self, lvalue: &Lvalue<'tcx>) -> PResult<'e, SpirvLvalue> {
         use rustc::mir::repr::Lvalue::*;
         use inspirv::core::enumeration::StorageClass::*;
         use self::SpirvType::*;
@@ -827,12 +835,12 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         self.tcx.map.as_local_node_id(id).expect("Id not defined in local crate!")
     }
 
-    fn get_node_attributes(&self, id: DefId) -> PResult<'v, Vec<Attribute>> {
+    fn get_node_attributes(&self, id: DefId) -> PResult<'e, Vec<Attribute>> {
         let node_id = self.get_node_id(id);
         attribute::parse(self.tcx.sess, self.tcx.map.attrs(node_id))
     }
 
-    fn rust_ty_to_spirv(&self, t: Ty<'tcx>) -> PResult<'v, Type> {
+    fn rust_ty_to_spirv(&self, t: Ty<'tcx>) -> PResult<'e, Type> {
         use self::SpirvType::*;
         match self.rust_ty_to_spirv_ref(t)? {
             NoRef(ty) => Ok(ty),
@@ -841,7 +849,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     }
 
     // TODO: low: We could cache some aggregated types for faster compilation
-    fn rust_ty_to_spirv_ref(&self, t: Ty<'tcx>) -> PResult<'v, SpirvType> {
+    fn rust_ty_to_spirv_ref(&self, t: Ty<'tcx>) -> PResult<'e, SpirvType> {
         use self::SpirvType::*;
         match t.sty {
             ty::TyBool => Ok(NoRef(Type::Bool)),
@@ -964,14 +972,14 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     }
 }
 
-pub struct InspirvBlock<'a, 'b, 'v: 'a, 'tcx: 'v> {
+pub struct InspirvBlock<'a: 'b, 'b, 'v: 'a, 'tcx: 'v> {
     pub ctxt: &'a mut InspirvFnCtxt<'v, 'tcx>,
     pub block: &'b mut Block,
     pub labels: &'b IndexVec<BasicBlock, Id>,
 }
 
-impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
-    fn trans_stmnt(&mut self, stmt: &Statement<'tcx>) -> PResult<'v, ()>{
+impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
+    fn trans_stmnt(&mut self, stmt: &Statement<'tcx>) -> PResult<'e, ()>{
         match stmt.kind {
             StatementKind::Assign(ref assign_lvalue, ref rvalue) => {
                 println!("{:?}", (assign_lvalue, rvalue));
@@ -1189,7 +1197,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         Ok(())
     }
 
-    fn trans_terminator(&mut self, ret_ty: &Type, terminator: &Terminator<'tcx>) -> PResult<'v, ()> {
+    fn trans_terminator(&'e mut self, ret_ty: &Type, terminator: &Terminator<'tcx>) -> PResult<'e, ()> {
         use rustc::mir::repr::TerminatorKind::*;
         match terminator.kind {
             Return => {
@@ -1293,7 +1301,11 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                     return_ids: None,
                                 };
 
-                                fn_ctxt.trans_fn(FnTrans::Required);
+                                let result = fn_ctxt.trans_fn(FnTrans::Required);
+                                if let Err(mut err) = result {
+                                    err.emit();
+                                    return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
+                                }
                             }
 
                             let fn_id = self.ctxt.fn_ids[&(def_id, signature)];
@@ -1344,7 +1356,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         Ok(())
     }
 
-    pub fn trans_operand(&mut self, operand: &Operand<'tcx>) -> PResult<'v, SpirvOperand<'tcx>> {
+    pub fn trans_operand(&mut self, operand: &Operand<'tcx>) -> PResult<'e, SpirvOperand<'tcx>> {
         use rustc::mir::repr::Operand::*;
         match *operand {
             Consume(ref lvalue) => {
@@ -1396,7 +1408,7 @@ impl<'a, 'b, 'v: 'a, 'tcx: 'v> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    fn emit_binop(&mut self, op: BinOp, (result_id, result_ty): IdAndType, (left_id, left_ty): IdAndType, (right_id, right_ty): IdAndType) -> PResult<'v, ()> {
+    fn emit_binop(&mut self, op: BinOp, (result_id, result_ty): IdAndType, (left_id, left_ty): IdAndType, (right_id, right_ty): IdAndType) -> PResult<'e, ()> {
         use self::SpirvType::*;
         let left_ptr_id = self.ctxt.builder.alloc_id();
         let right_ptr_id = self.ctxt.builder.alloc_id();
