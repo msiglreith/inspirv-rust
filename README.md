@@ -3,7 +3,7 @@
 An experimental compiler from [Rust] to [SPIR-V], using the `rustc` compiler and [MIR].
 The code is based upon [miri] and [mir2wasm].
 
-> nightly-2016-09-30
+> rustc 1.14.0-nightly (6e8f92f11 2016-10-07)
 
 ## Resources
 
@@ -29,3 +29,6 @@ additional terms or conditions.
 
 [Rust]: https://www.rust-lang.org/
 [MIR]: https://github.com/rust-lang/rfcs/blob/master/text/1211-mir.md
+[miri]: https://github.com/solson/miri
+[mir2wasm]: https://github.com/brson/mir2wasm
+[SPIR-V]: https://www.khronos.org/registry/spir-v/specs/1.1/SPIRV.html

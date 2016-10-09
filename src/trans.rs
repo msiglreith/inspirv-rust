@@ -5,8 +5,9 @@ use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::{ConstInt, ConstFloat};
-use rustc::ty::{self, TyCtxt, Ty, VariantKind};
+use rustc::ty::{self, TyCtxt, Ty};
 use rustc::hir;
+use rustc::hir::def::CtorKind;
 use rustc::hir::def_id::DefId;
 use rustc::util::common::time;
 use rustc_borrowck as borrowck;
@@ -567,7 +568,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                 if let Some(location) = attribute_loc {
                                     self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
                                 } else {
-                                    bug!("Output argument type field requires a location attribute ({:?})", self.mir.return_ty)
+                                    err = Some(self.tcx.sess.struct_err("Output argument type field requires a location attribute"));
                                 }
 
                                 interface_ids.push(id);
@@ -924,7 +925,7 @@ impl<'v, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     return Ok(NoRef(Type::Void))
                 }
 
-                let unit_only = adt.variants.iter().all(|variant| variant.kind == VariantKind::Unit);
+                let unit_only = adt.variants.iter().all(|variant| variant.ctor_kind == CtorKind::Const);
                 if !unit_only {
                     bug!("inspirv: Enums can only contain unit type structs ({:?})", t.sty);
                 }
