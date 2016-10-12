@@ -463,7 +463,16 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
                                     self.builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationOffset(LiteralInteger(offset as u32)));
                                     offset += field.size_of();
+
+                                    // Matrix types require ColMajor/RowMajor decorations and MatrixStride [SPIR-V 2.16.2]
+                                    if let Type::Matrix { ref base, rows, cols } = *field {
+                                        let stride = Type::Vector { base: base.clone(), components: rows }.size_of();
+                                        self.builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationMatrixStride(LiteralInteger(stride as u32)));
+                                        self.builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationColMajor);
+                                    }
                                 }
+
+                                let attrs = attribute::parse(self.tcx.sess, self.tcx.map.attrs(node_id))?;
 
                                 for attr in attrs {
                                     if let Attribute::Descriptor { set, binding } = attr {

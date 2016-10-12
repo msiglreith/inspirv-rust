@@ -28,7 +28,7 @@ impl Float2 {
     pub fn dot(self, rhs: Float2) -> f32 { self.x * rhs.x + self.y * rhs.y }
 
     #[inspirv(intrinsic(outer_product))]
-    pub fn outer(self, _rhs: &Float2) -> Float2x2 { loop {} }
+    pub fn outer(self, _rhs: Float2) -> Float2x2 { loop {} }
 
     #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float2 { loop {} }

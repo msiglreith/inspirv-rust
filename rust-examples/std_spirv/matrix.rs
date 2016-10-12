@@ -5,11 +5,7 @@ use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 use super::{Float2, Float3, Float4};
 
 #[inspirv(matrix(base = "f32", rows = 2, cols = 2))]
-pub struct Float2x2 {
-    row0: Float2,
-    row1: Float2,
-}
-
+pub struct Float2x2 {}
 impl Copy for Float2x2 {}
 
 impl Float2x2 {
