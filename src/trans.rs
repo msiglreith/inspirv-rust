@@ -607,7 +607,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 if let SpirvType::Ref{ mutable: true, .. } = return_ty {
                     err = Some(self.tcx.sess.struct_err("Mutable references as return type are currently unsupported"));
                 }
-                self.return_ids = if let Type::Void = *return_ty.ty() {
+                self.return_ids = if Type::Void == *return_ty.ty() {
                     None
                 } else {
                     let id = self.builder.alloc_id();
@@ -646,7 +646,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 }
                 let id = self.builder.alloc_id();
                 let ty = self.rust_ty_to_spirv_ref(local.ty)?;
-                if let Type::Void = *ty.ty() {
+                if Type::Void == *ty.ty() {
                     ids.push(None);
                 } else {
                     let local_var = LocalVar {
@@ -1206,9 +1206,16 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                         self.block.branch_instr = Some(BranchInstruction::Return(OpReturn));
                     }
                     (_, &Some(FuncReturn::Return((id, ref ty)))) => {
-                        let load_id = self.ctxt.builder.alloc_id();
-                        let op_load = OpLoad(self.ctxt.builder.define_type(ty), load_id, id, None);
-                        self.block.emit_instruction(op_load);
+                        use self::SpirvType::*;
+                        let load_id = match *ty {
+                            NoRef(ref ty) => {
+                                let load_id = self.ctxt.builder.alloc_id();
+                                let op_load = OpLoad(self.ctxt.builder.define_type(ty), load_id, id, None);
+                                self.block.emit_instruction(op_load);
+                                load_id
+                            }
+                            Ref { referent, .. } => referent.unwrap(),
+                        };
                         self.block.branch_instr = Some(BranchInstruction::ReturnValue(OpReturnValue(load_id)));
                     }
                     (_, &Some(FuncReturn::Interface(..))) => unreachable!(),
@@ -1279,6 +1286,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                             let component_ids = args_ops.iter().filter_map(
                                                     |arg| match *arg {
                                                         SpirvOperand::Constant(c, _) => Some(c),
+                                                        SpirvOperand::Consume(SpirvLvalue::Variable(_, SpirvType::Ref { referent, .. } , _)) => referent,
                                                         SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, _, _)) => Some(op_ptr_id),
                                                         _ => None
                                                     }).collect::<Vec<_>>();

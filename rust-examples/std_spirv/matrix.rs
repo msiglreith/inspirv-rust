@@ -14,10 +14,10 @@ impl Copy for Float2x2 {}
 
 impl Float2x2 {
     #[inspirv(intrinsic(transpose))]
-    pub fn transpose(&self) -> Float2x2 { loop {} }
+    pub fn transpose(self) -> Float2x2 { loop {} }
 
     #[inspirv(intrinsic(inverse))]
-    pub fn inverse(&self) -> Float2x2 { loop {} }
+    pub fn inverse(self) -> Float2x2 { loop {} }
 }
 
 impl Add<Float2x2> for Float2x2 {

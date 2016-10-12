@@ -3,7 +3,7 @@ use rustc::mir::repr::*;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::ConstInt;
 use syntax::parse::PResult;
-use trans::{InspirvBlock, SpirvOperand, SpirvLvalue};
+use trans::{InspirvBlock, SpirvOperand, SpirvLvalue, SpirvType};
 use inspirv::types::*;
 use inspirv::core::instruction::*;
 use inspirv_builder::module::{self, Type};
@@ -29,6 +29,7 @@ pub enum Intrinsic {
     OuterProduct,
     Normalize,
     Cross,
+    Deref,
 }
 
 impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
@@ -38,6 +39,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
         let component_ids = args_ops.iter().filter_map(
                                 |arg| match *arg {
                                     SpirvOperand::Constant(c, _) => Some(c),
+                                    SpirvOperand::Consume(SpirvLvalue::Variable(_, SpirvType::Ref { referent, .. } , _)) => referent,
                                     SpirvOperand::Consume(SpirvLvalue::Variable(op_ptr_id, ref op_ty, _)) => {
                                         let op_id = self.ctxt.builder.alloc_id();
                                         let op_load = OpLoad(self.ctxt.builder.define_type(op_ty), op_id, op_ptr_id, None);
@@ -98,6 +100,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
             Normalize => self.emit_normalize(args_ops, component_ids),
             Cross => self.emit_cross(args_ops, component_ids),
             OuterProduct => self.emit_outer_product(args_ops, component_ids),
+            Deref => Ok(component_ids[0]),
             _ => bug!("Unknown function call intrinsic")
         }
     }

@@ -358,6 +358,7 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                         "outer_product" => Intrinsic::OuterProduct,
                                                         "normalize" => Intrinsic::Normalize,
                                                         "cross" => Intrinsic::Cross,
+                                                        "deref" => Intrinsic::Deref,
                                                         _ => {
                                                             sess.span_err(item.span, "Unknown `inspirv` intrinsic");
                                                             continue;
