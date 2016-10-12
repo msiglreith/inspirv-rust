@@ -14,10 +14,8 @@ use rustc_borrowck as borrowck;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use rustc::ty::subst::Substs;
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
-use std::fs::File;
 use std::ops::Deref;
 use std::collections::HashMap;
-use inspirv;
 use inspirv::instruction;
 use inspirv::types::*;
 use inspirv::core::instruction::*;
@@ -25,7 +23,7 @@ use inspirv::core::enumeration::*;
 use inspirv::instruction::BranchInstruction;
 use inspirv_builder;
 use inspirv_builder::function::{Argument, LocalVar, Block, FuncId};
-use inspirv_builder::module::{self, Type, ModuleBuilder, ConstValue, ConstValueFloat};
+use inspirv_builder::module::{self, Type, RawModule, ModuleBuilder, ConstValue, ConstValueFloat};
 use attribute::{self, Attribute};
 use monomorphize;
 use traits;
@@ -36,7 +34,7 @@ const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|pa
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                                     mut mir_map: &mut MirMap<'tcx>,
-                                    analysis: &ty::CrateAnalysis) {
+                                    analysis: &ty::CrateAnalysis) -> Option<RawModule> {
     let time_passes = tcx.sess.time_passes();
 
     // Run the passes that transform the MIR into a more suitable for translation
@@ -63,12 +61,12 @@ pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
     time(time_passes,
          "translation",
-         move || trans_crate(tcx, mir_map, analysis));
+         move || trans_crate(tcx, mir_map, analysis))
 }
 
 fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                          mir_map: &MirMap<'tcx>,
-                         _analysis: &ty::CrateAnalysis) {
+                         _analysis: &ty::CrateAnalysis) -> Option<RawModule> {
     let mut builder = ModuleBuilder::new();
     builder.with_source(SourceLanguage::SourceLanguageUnknown, VERSION_INSPIRV_RUST);
 
@@ -80,7 +78,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         fn_ids: HashMap::new(),
     };
 
-    v.trans();
+    v.trans()
 }
 
 #[derive(Clone, Debug)]
@@ -215,7 +213,7 @@ enum FnTrans {
 }
 
 impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
-    fn trans(&mut self) {
+    fn trans(&mut self) -> Option<RawModule> {
         let def_ids = self.mir_map.map.keys();
         for def_id in def_ids {
             let mir = self.mir_map.map.get(&def_id).unwrap();
@@ -251,20 +249,12 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 Ok(_) => {}
                 Err(mut err) => {
                     err.emit();
-                    return;
+                    return None;
                 }
             }
         }
 
-        let out_file = File::create("example.spv").unwrap();
-        self.builder.build().ok().unwrap().export_binary(out_file);
-
-        let file = File::open("example.spv").unwrap();
-        let mut reader = inspirv::read_binary::ReaderBinary::new(file).unwrap();
-
-        while let Some(instr) = reader.read_instruction().unwrap() {
-            println!("{:?}", instr);
-        }
+        self.builder.build().ok()
     }
 }
 
