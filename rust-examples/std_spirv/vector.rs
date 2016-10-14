@@ -4,12 +4,14 @@ use super::{Float2x2, Float3x3, Float4x4};
 
 use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
-#[inspirv(vector(base = "f32", components = 2))]
-pub struct Float2 {
-    pub x: f32,
-    pub y: f32,
+#[inspirv(vector(components = 2))]
+pub struct Vector2<T: Copy> {
+    pub x: T,
+    pub y: T,
 }
-impl Copy for Float2 {}
+impl<T: Copy> Copy for Vector2<T> {}
+
+pub type Float2 = Vector2<f32>;
 
 impl Float2 {
     #[inspirv(intrinsic(vector_new(1, 1)))]
@@ -72,13 +74,15 @@ impl SubAssign<Float2> for Float2 {
     }
 }
 
-#[inspirv(vector(base = "f32", components = 3))]
-pub struct Float3 {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
+#[inspirv(vector(components = 3))]
+pub struct Vector3<T: Copy> {
+    pub x: T,
+    pub y: T,
+    pub z: T,
 }
-impl Copy for Float3 {}
+impl<T: Copy> Copy for Vector3<T> {}
+
+pub type Float3 = Vector3<f32>;
 
 impl Float3 {
     #[inspirv(intrinsic(vector_new(1, 1, 1)))]
@@ -158,14 +162,16 @@ impl SubAssign<Float3> for Float3 {
     }
 }
 
-#[inspirv(vector(base = "f32", components = 4))]
-pub struct Float4 {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-    pub w: f32,
+#[inspirv(vector(components = 4))]
+pub struct Vector4<T: Copy> {
+    pub x: T,
+    pub y: T,
+    pub z: T,
+    pub w: T,
 }
-impl Copy for Float4 {}
+impl<T: Copy> Copy for Vector4<T> {}
+
+pub type Float4 = Vector4<f32>;
 
 impl Float4 {
     #[inspirv(intrinsic(vector_new(1, 1, 1, 1)))]

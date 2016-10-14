@@ -137,7 +137,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
     fn emit_vector_new(&mut self, num_components: &[u32], args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'e, Id> {
         assert!(num_components.len() == component_ids.len());
         let out_components = num_components.iter().fold(0, |acc, &x| acc + x);
-        let base_ty = Type::Float(32);
+        let base_ty = Type::Float(32); // TODO: high:
         let ty = Type::Vector{ base: Box::new(base_ty.clone()), components: out_components };
         if args.iter().all(|arg| arg.is_constant()) && num_components.iter().all(|num| *num == 1) {
             // all args are scalar constants!

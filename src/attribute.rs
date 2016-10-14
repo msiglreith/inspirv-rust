@@ -16,7 +16,6 @@ pub enum Attribute {
         location: u64,
     },
     Vector {
-        base: Box<Type>,
         components: u64,
     },
     Matrix {
@@ -91,7 +90,6 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                         MetaItemKind::List(ref name, ref items) => {
                             match &**name {
                                 "vector" => {
-                                    let mut base = None;
                                     let mut components = None;
                                     for item in items {
                                         match item.node {
@@ -105,14 +103,6 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                                     _ => return Err(sess.struct_span_err(value.span, "Inspirv: vector component value must be an integer (>2)")),
                                                                 }
                                                             }
-                                                            "base" => {
-                                                                base = match &*extract_attr_str(value) {
-                                                                    "bool" => Some(Type::Bool),
-                                                                    "f32" => Some(Type::Float(32)),
-                                                                    "f64" => Some(Type::Float(64)),
-                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: Unsupported vector base type")),
-                                                                }
-                                                            }
                                                             _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown vector attribute item")),
                                                         }
                                                     }
@@ -123,11 +113,10 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                         }
                                     }
 
-                                    if base.is_none() || components.is_none() {
+                                    if components.is_none() {
                                         return Err(sess.struct_span_err(item.span, "Inspirv: vector misses `base` or `component` attributes"));
                                     } else {
                                         attrs.push(Attribute::Vector { 
-                                            base: Box::new(base.unwrap()),
                                             components: components.unwrap()
                                         });
                                     }

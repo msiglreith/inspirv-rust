@@ -891,9 +891,10 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 });
                 if let Some(internal_type) = internal_type {
                     match *internal_type {
-                        Attribute::Vector { ref base, components } => {
+                        Attribute::Vector { components } => {
+                            let base = self.rust_ty_to_spirv(adt.struct_variant().fields[0].ty(*self.tcx, subs))?;
                             Ok(NoRef(Type::Vector {
-                                base: base.clone(),
+                                base: Box::new(base),
                                 components: components as u32,
                             }))
                         }
