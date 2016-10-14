@@ -25,11 +25,82 @@ macro_rules! vector2_impl {
 
             #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 4)))]
             pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 2, num_out = 2)))]
+            pub fn shuffle2x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 3, num_out = 2)))]
+            pub fn shuffle2x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 4, num_out = 2)))]
+            pub fn shuffle2x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 2, num_out = 3)))]
+            pub fn shuffle3x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 3, num_out = 3)))]
+            pub fn shuffle3x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 4, num_out = 3)))]
+            pub fn shuffle3x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 2, num_out = 4)))]
+            pub fn shuffle4x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 3, num_out = 4)))]
+            pub fn shuffle4x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 4, num_out = 4)))]
+            pub fn shuffle4x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
         }
     )*)
 }
 
 vector2_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 bool }
+
+macro_rules! vector2_ops_impl {
+    ($($t:ty)*) => ($(
+        impl Add for Vector2<$t> {
+            type Output = Vector2<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn add(self, rhs: Vector2<$t>) -> Self::Output {
+                Vector2 {
+                    x: self.x + rhs.x,
+                    y: self.y + rhs.y,
+                }
+            }
+        }
+
+        impl AddAssign for Vector2<$t> {
+            #[inline]
+            fn add_assign(&mut self, rhs: Vector2<$t>) {
+                *self = *self + rhs;
+            }
+        }
+
+        impl Sub for Vector2<$t>  {
+            type Output = Vector2<$t> ;
+
+            #[inspirv(intrinsic(sub))]
+            fn sub(self, rhs: Vector2<$t> ) -> Self::Output {
+                Vector2 {
+                    x: self.x - rhs.x,
+                    y: self.y - rhs.y,
+                }
+            }
+        }
+
+        impl SubAssign for Vector2<$t>  {
+            #[inline]
+            fn sub_assign(&mut self, rhs: Vector2<$t> ) {
+                *self = *self - rhs;
+            }
+        }
+    )*)
+}
+
+vector2_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 pub type Float2 = Vector2<f32>;
 
@@ -42,44 +113,6 @@ impl Float2 {
 
     #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float2 { loop {} }
-}
-
-impl Add<Float2> for Float2 {
-    type Output = Float2;
-
-    #[inspirv(intrinsic(add))]
-    fn add(self, rhs: Float2) -> Self::Output {
-        Float2 {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-        }
-    }
-}
-
-impl AddAssign<Float2> for Float2 {
-    #[inline]
-    fn add_assign(&mut self, rhs: Float2) {
-        *self = *self + rhs;
-    }
-}
-
-impl Sub<Float2> for Float2 {
-    type Output = Float2;
-
-    #[inspirv(intrinsic(sub))]
-    fn sub(self, rhs: Float2) -> Self::Output {
-        Float2 {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-        }
-    }
-}
-
-impl SubAssign<Float2> for Float2 {
-    #[inline]
-    fn sub_assign(&mut self, rhs: Float2) {
-        *self = *self - rhs;
-    }
 }
 
 #[inspirv(vector(components = 3))]
@@ -116,11 +149,84 @@ macro_rules! vector3_impl {
 
             #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 4)))]
             pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 2, num_out = 2)))]
+            pub fn shuffle2x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 3, num_out = 2)))]
+            pub fn shuffle2x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 4, num_out = 2)))]
+            pub fn shuffle2x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 2, num_out = 3)))]
+            pub fn shuffle3x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 3, num_out = 3)))]
+            pub fn shuffle3x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 4, num_out = 3)))]
+            pub fn shuffle3x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 2, num_out = 4)))]
+            pub fn shuffle4x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 3, num_out = 4)))]
+            pub fn shuffle4x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 4, num_out = 4)))]
+            pub fn shuffle4x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
         }
     )*)
 }
 
 vector3_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 bool }
+
+macro_rules! vector3_ops_impl {
+    ($($t:ty)*) => ($(
+        impl Add for Vector3<$t> {
+            type Output = Vector3<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn add(self, rhs: Vector3<$t>) -> Self::Output {
+                Vector3 {
+                    x: self.x + rhs.x,
+                    y: self.y + rhs.y,
+                    z: self.z + rhs.z,
+                }
+            }
+        }
+
+        impl AddAssign for Vector3<$t> {
+            #[inline]
+            fn add_assign(&mut self, rhs: Vector3<$t>) {
+                *self = *self + rhs;
+            }
+        }
+
+        impl Sub for Vector3<$t> {
+            type Output = Vector3<$t>;
+
+            #[inspirv(intrinsic(sub))]
+            fn sub(self, rhs: Vector3<$t>) -> Self::Output {
+                Vector3 {
+                    x: self.x - rhs.x,
+                    y: self.y - rhs.y,
+                    z: self.z - rhs.z,
+                }
+            }
+        }
+
+        impl SubAssign for Vector3<$t> {
+            #[inline]
+            fn sub_assign(&mut self, rhs: Vector3<$t>) {
+                *self = *self - rhs;
+            }
+        }
+    )*)
+}
+
+vector3_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 pub type Float3 = Vector3<f32>;
 
@@ -136,46 +242,6 @@ impl Float3 {
 
     #[inspirv(intrinsic(cross))]
     pub fn cross(self, _rhs: Float3) -> Float3 { loop {} }
-}
-
-impl Add<Float3> for Float3 {
-    type Output = Float3;
-
-    #[inspirv(intrinsic(add))]
-    fn add(self, rhs: Float3) -> Self::Output {
-        Float3 {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-            z: self.z + rhs.z,
-        }
-    }
-}
-
-impl AddAssign<Float3> for Float3 {
-    #[inline]
-    fn add_assign(&mut self, rhs: Float3) {
-        *self = *self + rhs;
-    }
-}
-
-impl Sub<Float3> for Float3 {
-    type Output = Float3;
-
-    #[inspirv(intrinsic(sub))]
-    fn sub(self, rhs: Float3) -> Self::Output {
-        Float3 {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-            z: self.z - rhs.z,
-        }
-    }
-}
-
-impl SubAssign<Float3> for Float3 {
-    #[inline]
-    fn sub_assign(&mut self, rhs: Float3) {
-        *self = *self - rhs;
-    }
 }
 
 #[inspirv(vector(components = 4))]
@@ -229,7 +295,6 @@ macro_rules! vector4_impl {
             #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 4)))]
             pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
 
-
             #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 2, num_out = 2)))]
             pub fn shuffle2x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
 
@@ -262,6 +327,54 @@ macro_rules! vector4_impl {
 
 vector4_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 bool }
 
+macro_rules! vector4_ops_impl {
+    ($($t:ty)*) => ($(
+        impl Add for Vector4<$t> {
+            type Output = Vector4<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn add(self, rhs: Vector4<$t>) -> Self::Output {
+                Vector4 {
+                    x: self.x + rhs.x,
+                    y: self.y + rhs.y,
+                    z: self.z + rhs.z,
+                    w: self.w + rhs.w,
+                }
+            }
+        }
+
+        impl AddAssign for Vector4<$t> {
+            #[inline]
+            fn add_assign(&mut self, rhs: Vector4<$t>) {
+                *self = *self + rhs;
+            }
+        }
+
+        impl Sub for Vector4<$t> {
+            type Output = Vector4<$t>;
+
+            #[inspirv(intrinsic(sub))]
+            fn sub(self, rhs: Vector4<$t>) -> Self::Output {
+                Vector4 {
+                    x: self.x - rhs.x,
+                    y: self.y - rhs.y,
+                    z: self.z - rhs.z,
+                    w: self.w - rhs.w,
+                }
+            }
+        }
+
+        impl SubAssign for Vector4<$t> {
+            #[inline]
+            fn sub_assign(&mut self, rhs: Vector4<$t>) {
+                *self = *self - rhs;
+            }
+        }
+    )*)
+}
+
+vector4_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
+
 pub type Float4 = Vector4<f32>;
 
 impl Float4 {
@@ -273,46 +386,4 @@ impl Float4 {
 
     #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float4 { loop {} }
-}
-
-impl Add<Float4> for Float4 {
-    type Output = Float4;
-
-    #[inspirv(intrinsic(add))]
-    fn add(self, rhs: Float4) -> Self::Output {
-        Float4 {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-            z: self.z + rhs.z,
-            w: self.w + rhs.w,
-        }
-    }
-}
-
-impl AddAssign<Float4> for Float4 {
-    #[inline]
-    fn add_assign(&mut self, rhs: Float4) {
-        *self = *self + rhs;
-    }
-}
-
-impl Sub<Float4> for Float4 {
-    type Output = Float4;
-
-    #[inspirv(intrinsic(sub))]
-    fn sub(self, rhs: Float4) -> Self::Output {
-        Float4 {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-            z: self.z - rhs.z,
-            w: self.w - rhs.w,
-        }
-    }
-}
-
-impl SubAssign<Float4> for Float4 {
-    #[inline]
-    fn sub_assign(&mut self, rhs: Float4) {
-        *self = *self - rhs;
-    }
 }
