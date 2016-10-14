@@ -19,7 +19,6 @@ pub enum Attribute {
         components: u64,
     },
     Matrix {
-        base: Box<Type>,
         rows: u64,
         cols: u64,
     },
@@ -123,7 +122,6 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                 }
 
                                 "matrix" => {
-                                    let mut base = None;
                                     let mut rows = None;
                                     let mut cols = None;
                                     for item in items {
@@ -144,14 +142,6 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                                     _ => return Err(sess.struct_span_err(value.span, "Inspirv: matrix cols value must be an integer (>2)")),
                                                                 }
                                                             }
-                                                            "base" => {
-                                                                base = match &*extract_attr_str(value) {
-                                                                    "bool" => Some(Type::Bool),
-                                                                    "f32" => Some(Type::Float(32)),
-                                                                    "f64" => Some(Type::Float(64)),
-                                                                    _ => return Err(sess.struct_span_err(value.span, "Inspirv: Unsupported matrix base type")),
-                                                                }
-                                                            }
                                                             _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown matrix attribute item")),
                                                         }
                                                     }
@@ -162,11 +152,10 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                         }
                                     }
 
-                                    if base.is_none() || rows.is_none() || cols.is_none() {
-                                        return Err(sess.struct_span_err(item.span, "Inspirv: matrix misses `base`, `rows` or `cols` attributes"));
+                                    if rows.is_none() || cols.is_none() {
+                                        return Err(sess.struct_span_err(item.span, "Inspirv: matrix misses `rows` or `cols` attributes"));
                                     } else {
                                         attrs.push(Attribute::Matrix { 
-                                            base: Box::new(base.unwrap()),
                                             rows: rows.unwrap(),
                                             cols: cols.unwrap(),
                                         });

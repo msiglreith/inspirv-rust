@@ -58,6 +58,8 @@ impl<'a> CompilerCalls<'a> for SpirvCompilerCalls {
                 while let Some(instr) = reader.read_instruction().unwrap() {
                     println!("{:?}", instr);
                 }
+            } else {
+                println!("u wot");
             }
             
         });

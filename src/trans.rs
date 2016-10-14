@@ -254,7 +254,14 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             }
         }
 
-        self.builder.build().ok()
+        println!("build!");
+        match self.builder.build() {
+            Ok(module) => Some(module),
+            Err(err) => {
+                println!("{:?}", err);
+                None
+            }
+        }
     }
 }
 
@@ -898,12 +905,17 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                 components: components as u32,
                             }))
                         }
-                        Attribute::Matrix { ref base, rows, cols } => {
-                           Ok(NoRef(Type::Matrix {
-                                base: base.clone(),
-                                rows: rows as u32,
-                                cols: cols as u32,
-                            }))
+                        Attribute::Matrix { rows, cols } => {
+                            let base = self.rust_ty_to_spirv(adt.struct_variant().fields[0].ty(*self.tcx, subs))?;
+                            if let Type::Vector { base, .. } = base {
+                                Ok(NoRef(Type::Matrix {
+                                    base: base,
+                                    rows: rows as u32,
+                                    cols: cols as u32,
+                                }))
+                            } else {
+                                bug!("Unexpected matrix base type ({:?})", base)
+                            }                            
                         }
                         _ => bug!("Unhandled internal type ({:?})", *internal_type),
                     }
