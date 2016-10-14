@@ -2,11 +2,58 @@
 use super::core::marker::Copy;
 use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
-use super::{Float2, Float3, Float4};
+use super::{Vector2, Vector3, Vector4};
 
-#[inspirv(matrix(base = "f32", rows = 2, cols = 2))]
-pub struct Float2x2 {}
-impl Copy for Float2x2 {}
+#[inspirv(matrix(rows = 2, cols = 2))]
+pub struct Matrix2x2<T: Copy> {
+    pub col0: Vector2<T>,
+    pub col1: Vector2<T>,
+}
+
+impl<T: Copy> Copy for Matrix2x2<T> {}
+
+macro_rules! matrix2x2_ops_impl {
+    ($($t:ty)*) => ($(
+        impl Add for Matrix2x2<$t> {
+            type Output = Matrix2x2<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn add(self, _rhs: Matrix2x2<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Sub for Matrix2x2<$t> {
+            type Output = Matrix2x2<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn sub(self, _rhs: Matrix2x2<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Mul<$t> for Matrix2x2<$t> {
+            type Output = Matrix2x2<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: $t) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Vector2<$t>> for Matrix2x2<$t> {
+            type Output = Vector2<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Vector2<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Matrix2x2<$t>> for Matrix2x2<$t> {
+            type Output = Matrix2x2<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Matrix2x2<$t>) -> Self::Output { loop {} }
+        }
+    )*)
+}
+
+matrix2x2_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
+
+pub type Float2x2 = Matrix2x2<f32>;
 
 impl Float2x2 {
     #[inspirv(intrinsic(transpose))]
@@ -16,44 +63,57 @@ impl Float2x2 {
     pub fn inverse(self) -> Float2x2 { loop {} }
 }
 
-impl Add<Float2x2> for Float2x2 {
-    type Output = Float2x2;
-
-    #[inspirv(intrinsic(add))]
-    fn add(self, _rhs: Float2x2) -> Self::Output { loop {} }
+#[inspirv(matrix(rows = 3, cols = 3))]
+pub struct Matrix3x3<T: Copy> {
+    pub col0: Vector3<T>,
+    pub col1: Vector3<T>,
+    pub col2: Vector3<T>,
 }
 
-impl Sub<Float2x2> for Float2x2 {
-    type Output = Float2x2;
+impl<T: Copy> Copy for Matrix3x3<T> {}
 
-    #[inspirv(intrinsic(add))]
-    fn sub(self, _rhs: Float2x2) -> Self::Output { loop {} }
+macro_rules! matrix3x3_ops_impl {
+    ($($t:ty)*) => ($(
+        impl Add for Matrix3x3<$t> {
+            type Output = Matrix3x3<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn add(self, _rhs: Matrix3x3<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Sub for Matrix3x3<$t> {
+            type Output = Matrix3x3<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn sub(self, _rhs: Matrix3x3<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Mul<$t> for Matrix3x3<$t> {
+            type Output = Matrix3x3<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: $t) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Vector3<$t>> for Matrix3x3<$t> {
+            type Output = Vector3<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Vector3<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Matrix3x3<$t>> for Matrix3x3<$t> {
+            type Output = Matrix3x3<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Matrix3x3<$t>) -> Self::Output { loop {} }
+        }
+    )*)
 }
 
-impl Mul<f32> for Float2x2 {
-    type Output = Float2x2;
+matrix3x3_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: f32) -> Self::Output { loop {} }
-}
-
-impl Mul<Float2> for Float2x2 {
-    type Output = Float2;
-
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: Float2) -> Self::Output { loop {} }
-}
-
-impl Mul<Float2x2> for Float2x2 {
-    type Output = Float2x2;
-
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: Float2x2) -> Self::Output { loop {} }
-}
-
-#[inspirv(matrix(base = "f32", rows = 3, cols = 3))]
-pub struct Float3x3;
-impl Copy for Float3x3 {}
+pub type Float3x3 = Matrix3x3<f32>;
 
 impl Float3x3 {
     #[inspirv(intrinsic(transpose))]
@@ -63,44 +123,58 @@ impl Float3x3 {
     pub fn inverse(self) -> Float3x3 { loop {} }
 }
 
-impl Add<Float3x3> for Float3x3 {
-    type Output = Float3x3;
-
-    #[inspirv(intrinsic(add))]
-    fn add(self, _rhs: Float3x3) -> Self::Output { loop {} }
+#[inspirv(matrix(rows = 4, cols = 4))]
+pub struct Matrix4x4<T: Copy> {
+    pub col0: Vector4<T>,
+    pub col1: Vector4<T>,
+    pub col2: Vector4<T>,
+    pub col3: Vector4<T>,
 }
 
-impl Sub<Float3x3> for Float3x3 {
-    type Output = Float3x3;
+impl<T: Copy> Copy for Matrix4x4<T> {}
 
-    #[inspirv(intrinsic(add))]
-    fn sub(self, _rhs: Float3x3) -> Self::Output { loop {} }
+macro_rules! matrix4x4_ops_impl {
+    ($($t:ty)*) => ($(
+        impl Add for Matrix4x4<$t> {
+            type Output = Matrix4x4<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn add(self, _rhs: Matrix4x4<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Sub for Matrix4x4<$t> {
+            type Output = Matrix4x4<$t>;
+
+            #[inspirv(intrinsic(add))]
+            fn sub(self, _rhs: Matrix4x4<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Mul<$t> for Matrix4x4<$t> {
+            type Output = Matrix4x4<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: $t) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Vector4<$t>> for Matrix4x4<$t> {
+            type Output = Vector4<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Vector4<$t>) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Matrix4x4<$t>> for Matrix4x4<$t> {
+            type Output = Matrix4x4<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Matrix4x4<$t>) -> Self::Output { loop {} }
+        }
+    )*)
 }
 
-impl Mul<f32> for Float3x3 {
-    type Output = Float3x3;
+matrix4x4_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: f32) -> Self::Output { loop {} }
-}
-
-impl Mul<Float3> for Float3x3 {
-    type Output = Float3;
-
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: Float3) -> Self::Output { loop {} }
-}
-
-impl Mul<Float3x3> for Float3x3 {
-    type Output = Float3x3;
-
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: Float3x3) -> Self::Output { loop {} }
-}
-
-#[inspirv(matrix(base = "f32", rows = 4, cols = 4))]
-pub struct Float4x4;
-impl Copy for Float4x4 {}
+pub type Float4x4 = Matrix4x4<f32>;
 
 impl Float4x4 {
     #[inspirv(intrinsic(transpose))]
@@ -108,39 +182,4 @@ impl Float4x4 {
 
     #[inspirv(intrinsic(inverse))]
     pub fn inverse(self) -> Float4x4 { loop {} }
-}
-
-impl Add<Float4x4> for Float4x4 {
-    type Output = Float4x4;
-
-    #[inspirv(intrinsic(add))]
-    fn add(self, _rhs: Float4x4) -> Self::Output { loop {} }
-}
-
-impl Sub<Float4x4> for Float4x4 {
-    type Output = Float4x4;
-
-    #[inspirv(intrinsic(add))]
-    fn sub(self, _rhs: Float4x4) -> Self::Output { loop {} }
-}
-
-impl Mul<f32> for Float4x4 {
-    type Output = Float4x4;
-
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: f32) -> Self::Output { loop {} }
-}
-
-impl Mul<Float4> for Float4x4 {
-    type Output = Float4;
-
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: Float4) -> Self::Output { loop {} }
-}
-
-impl Mul<Float4x4> for Float4x4 {
-    type Output = Float4x4;
-
-    #[inspirv(intrinsic(mul))]
-    fn mul(self, _rhs: Float4x4) -> Self::Output { loop {} }
 }

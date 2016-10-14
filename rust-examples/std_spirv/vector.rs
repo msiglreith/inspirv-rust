@@ -1,6 +1,6 @@
 
 use super::core::marker::Copy;
-use super::{Float2x2, Float3x3, Float4x4};
+use super::{Matrix2x2, Matrix3x3, Matrix4x4};
 
 use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
@@ -109,7 +109,7 @@ impl Float2 {
     pub fn dot(self, rhs: Float2) -> f32 { self.x * rhs.x + self.y * rhs.y }
 
     #[inspirv(intrinsic(outer_product))]
-    pub fn outer(self, _rhs: Float2) -> Float2x2 { loop {} }
+    pub fn outer(self, _rhs: Float2) -> Matrix2x2<f32> { loop {} }
 
     #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float2 { loop {} }
@@ -235,7 +235,7 @@ impl Float3 {
     pub fn dot(self, rhs: Float3) -> f32 { self.x * rhs.x + self.y * rhs.y + self.z * rhs.z }
 
     #[inspirv(intrinsic(outer_product))]
-    pub fn outer(self, _rhs: Float3) -> Float3x3 { loop {} }
+    pub fn outer(self, _rhs: Float3) -> Matrix3x3<f32> { loop {} }
 
     #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float3 { loop {} }
@@ -382,7 +382,7 @@ impl Float4 {
     pub fn dot(self, rhs: Float4) -> f32 { self.x * rhs.x + self.y * rhs.y + self.z * rhs.z + self.w * rhs.w }
 
     #[inspirv(intrinsic(outer_product))]
-    pub fn outer(self, _rhs: Float4) -> Float4x4 { loop {} }
+    pub fn outer(self, _rhs: Float4) -> Matrix4x4<f32> { loop {} }
 
     #[inspirv(intrinsic(normalize))]
     pub fn normalize(self) -> Float4 { loop {} }
