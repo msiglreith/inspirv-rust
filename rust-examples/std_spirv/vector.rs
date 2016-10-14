@@ -11,21 +11,29 @@ pub struct Vector2<T: Copy> {
 }
 impl<T: Copy> Copy for Vector2<T> {}
 
+macro_rules! vector2_impl {
+    ($($t:ty)*) => ($(
+        impl Vector2<$t> {
+            #[inspirv(intrinsic(vector_new(1, 1)))]
+            pub fn new(x: $t, y: $t) -> Vector2<$t> { Vector2 { x: x, y: y } }
+
+            #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 2)))]
+            pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 3)))]
+            pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 4)))]
+            pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+        }
+    )*)
+}
+
+vector2_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 bool }
+
 pub type Float2 = Vector2<f32>;
 
 impl Float2 {
-    #[inspirv(intrinsic(vector_new(1, 1)))]
-    pub fn new(x: f32, y: f32) -> Float2 { Float2 { x: x, y: y } }
-
-    #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 2)))]
-    pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
-
-    #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 3)))]
-    pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Float3 { loop {} }
-
-    #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 4)))]
-    pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Float4 { loop {} }
-
      #[inspirv(intrinsic(mul))]
     pub fn dot(self, rhs: Float2) -> f32 { self.x * rhs.x + self.y * rhs.y }
 
@@ -82,33 +90,41 @@ pub struct Vector3<T: Copy> {
 }
 impl<T: Copy> Copy for Vector3<T> {}
 
+macro_rules! vector3_impl {
+    ($($t:ty)*) => ($(
+        impl Vector3<$t> {
+            #[inspirv(intrinsic(vector_new(1, 1, 1)))]
+            pub fn new(x: $t, y: $t, z: $t) -> Vector3<$t> {
+                Vector3 { x: x, y: y, z: z}
+            }
+
+            #[inspirv(intrinsic(vector_new(1, 2)))]
+            pub fn from_1_2(x: $t, yz: Vector2<$t>) -> Vector3<$t> {
+                Vector3 { x: x, y: yz.x, z: yz.y}
+            }
+
+            #[inspirv(intrinsic(vector_new(2, 1)))]
+            pub fn from_2_1(xy: Vector2<$t>, z: $t) -> Vector3<$t> {
+                Vector3 { x: xy.x, y: xy.y, z: z}
+            }
+
+            #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 2)))]
+            pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 3)))]
+            pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 4)))]
+            pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+        }
+    )*)
+}
+
+vector3_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 bool }
+
 pub type Float3 = Vector3<f32>;
 
 impl Float3 {
-    #[inspirv(intrinsic(vector_new(1, 1, 1)))]
-    pub fn new(x: f32, y: f32, z: f32) -> Float3 {
-        Float3 { x: x, y: y, z: z}
-    }
-
-    #[inspirv(intrinsic(vector_new(1, 2)))]
-    pub fn from_1_2(x: f32, yz: Float2) -> Float3 {
-        Float3 { x: x, y: yz.x, z: yz.y}
-    }
-
-    #[inspirv(intrinsic(vector_new(2, 1)))]
-    pub fn from_2_1(xy: Float2, z: f32) -> Float3 {
-        Float3 { x: xy.x, y: xy.y, z: z}
-    }
-
-    #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 2)))]
-    pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
-
-    #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 3)))]
-    pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Float3 { loop {} }
-
-    #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 4)))]
-    pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Float4 { loop {} }
-
     #[inspirv(intrinsic(mul))]
     pub fn dot(self, rhs: Float3) -> f32 { self.x * rhs.x + self.y * rhs.y + self.z * rhs.z }
 
@@ -171,76 +187,84 @@ pub struct Vector4<T: Copy> {
 }
 impl<T: Copy> Copy for Vector4<T> {}
 
+macro_rules! vector4_impl {
+    ($($t:ty)*) => ($(
+        impl Vector4<$t> {
+            #[inspirv(intrinsic(vector_new(1, 1, 1, 1)))]
+            pub fn new(x: $t, y: $t, z: $t, w: $t) -> Vector4<$t> {
+                Vector4 { x: x, y: y, z: z, w: w }
+            }
+
+            #[inspirv(intrinsic(vector_new(1, 1, 2)))]
+            pub fn from_1_1_2(x: $t, y: $t, zw: Vector2<$t>) -> Vector4<$t> {
+                Vector4 { x: x, y: y, z: zw.x, w: zw.y }
+            }
+
+            #[inspirv(intrinsic(vector_new(1, 3)))]
+            pub fn from_1_3(x: $t, yzw: Vector3<$t>) -> Vector4<$t> {
+                Vector4 { x: x, y: yzw.x, z: yzw.y, w: yzw.z }
+            }
+
+            #[inspirv(intrinsic(vector_new(2, 1, 1)))]
+            pub fn from_2_1_1(xy: Vector2<$t>, z: $t, w: $t) -> Vector4<$t> {
+                Vector4 { x: xy.x, y: xy.y, z: z, w: w }
+            }
+
+            #[inspirv(intrinsic(vector_new(2, 2)))]
+            pub fn from_2_2(xy: Vector2<$t>, zw: Vector2<$t>) -> Vector4<$t> {
+                Vector4 { x: xy.x, y: xy.y, z: zw.x, w: zw.y }
+            }
+
+            #[inspirv(intrinsic(vector_new(3, 1)))]
+            pub fn from_3_1(xyz: Vector3<$t>, w: $t) -> Vector4<$t> {
+                Vector4 { x: xyz.x, y: xyz.y, z: xyz.z, w: w }
+            }
+
+            #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 2)))]
+            pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 3)))]
+            pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 4)))]
+            pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 2, num_out = 2)))]
+            pub fn shuffle2x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 3, num_out = 2)))]
+            pub fn shuffle2x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 4, num_out = 2)))]
+            pub fn shuffle2x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 2, num_out = 3)))]
+            pub fn shuffle3x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 3, num_out = 3)))]
+            pub fn shuffle3x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 4, num_out = 3)))]
+            pub fn shuffle3x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 2, num_out = 4)))]
+            pub fn shuffle4x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 3, num_out = 4)))]
+            pub fn shuffle4x3(self, _v2: Vector3<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+
+            #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 4, num_out = 4)))]
+            pub fn shuffle4x4(self, _v2: Vector4<$t>, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+        }
+    )*)
+}
+
+vector4_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 bool }
+
 pub type Float4 = Vector4<f32>;
 
 impl Float4 {
-    #[inspirv(intrinsic(vector_new(1, 1, 1, 1)))]
-    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Float4 {
-        Float4 { x: x, y: y, z: z, w: w }
-    }
-
-    #[inspirv(intrinsic(vector_new(1, 1, 2)))]
-    pub fn from_1_1_2(x: f32, y: f32, zw: Float2) -> Float4 {
-        Float4 { x: x, y: y, z: zw.x, w: zw.y }
-    }
-
-    #[inspirv(intrinsic(vector_new(1, 3)))]
-    pub fn from_1_3(x: f32, yzw: Float3) -> Float4 {
-        Float4 { x: x, y: yzw.x, z: yzw.y, w: yzw.z }
-    }
-
-    #[inspirv(intrinsic(vector_new(2, 1, 1)))]
-    pub fn from_2_1_1(xy: Float2, z: f32, w: f32) -> Float4 {
-        Float4 { x: xy.x, y: xy.y, z: z, w: w }
-    }
-
-    #[inspirv(intrinsic(vector_new(2, 2)))]
-    pub fn from_2_2(xy: Float2, zw: Float2) -> Float4 {
-        Float4 { x: xy.x, y: xy.y, z: zw.x, w: zw.y }
-    }
-
-    #[inspirv(intrinsic(vector_new(3, 1)))]
-    pub fn from_3_1(xyz: Float3, w: f32) -> Float4 {
-        Float4 { x: xyz.x, y: xyz.y, z: xyz.z, w: w }
-    }
-
-    #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 2)))]
-    pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
-
-    #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 3)))]
-    pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Float3 { loop {} }
-
-    #[inspirv(intrinsic(swizzle(num_in = 4, num_out = 4)))]
-    pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Float4 { loop {} }
-
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 2, num_out = 2)))]
-    pub fn shuffle2x2(self, _v2: Float2, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 3, num_out = 2)))]
-    pub fn shuffle2x3(self, _v2: Float3, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 4, num_out = 2)))]
-    pub fn shuffle2x4(self, _v2: Float4, _idx_x: u32, _idx_y: u32) -> Float2 { loop {} }
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 2, num_out = 3)))]
-    pub fn shuffle3x2(self, _v2: Float2, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Float3 { loop {} }
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 3, num_out = 3)))]
-    pub fn shuffle3x3(self, _v2: Float3, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Float3 { loop {} }
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 4, num_out = 3)))]
-    pub fn shuffle3x4(self, _v2: Float4, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Float3 { loop {} }
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 2, num_out = 4)))]
-    pub fn shuffle4x2(self, _v2: Float2, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Float4 { loop {} }
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 3, num_out = 4)))]
-    pub fn shuffle4x3(self, _v2: Float3, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Float4 { loop {} }
-
-    #[inspirv(intrinsic(shuffle(num_in0 = 4, num_in1 = 4, num_out = 4)))]
-    pub fn shuffle4x4(self, _v2: Float4, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Float4 { loop {} }
-
     #[inspirv(intrinsic(mul))]
     pub fn dot(self, rhs: Float4) -> f32 { self.x * rhs.x + self.y * rhs.y + self.z * rhs.z + self.w * rhs.w }
 
