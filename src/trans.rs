@@ -254,7 +254,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             }
         }
 
-        println!("build!");
         match self.builder.build() {
             Ok(module) => Some(module),
             Err(err) => {
@@ -1101,13 +1100,40 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                                 match (left, right) {
                                     (SpirvOperand::Consume(SpirvLvalue::Variable(left_id, left_ty, _)),
-                                     SpirvOperand::Consume(SpirvLvalue::Variable(right_id, right_ty, _))) |
+                                     SpirvOperand::Consume(SpirvLvalue::Variable(right_id, right_ty, _))) => {
+                                        let left_ptr_id = self.ctxt.builder.alloc_id();
+                                        let right_ptr_id = self.ctxt.builder.alloc_id();
+
+                                        // load variable values
+                                        let op_load_left = OpLoad(self.ctxt.builder.define_type(&left_ty), left_ptr_id, left_id, None);
+                                        let op_load_right = OpLoad(self.ctxt.builder.define_type(&right_ty), right_ptr_id, right_id, None);
+                                        self.block.emit_instruction(op_load_left);
+                                        self.block.emit_instruction(op_load_right);
+
+                                        self.emit_binop(*op, (lvalue_id, lvalue_ty), (left_ptr_id, left_ty), (right_ptr_id, right_ty))?;
+                                    }
 
                                     (SpirvOperand::Consume(SpirvLvalue::Variable(left_id, left_ty, _)),
-                                     SpirvOperand::Constant(right_id, right_ty)) |
+                                     SpirvOperand::Constant(right_id, right_ty)) => {
+                                        let left_ptr_id = self.ctxt.builder.alloc_id();
+
+                                        // load variable value
+                                        let op_load_left = OpLoad(self.ctxt.builder.define_type(&left_ty), left_ptr_id, left_id, None);
+                                        self.block.emit_instruction(op_load_left);
+
+                                        self.emit_binop(*op, (lvalue_id, lvalue_ty), (left_ptr_id, left_ty), (right_id, right_ty))?;
+                                    }
 
                                     (SpirvOperand::Constant(left_id, left_ty),
-                                     SpirvOperand::Consume(SpirvLvalue::Variable(right_id, right_ty, _))) |
+                                     SpirvOperand::Consume(SpirvLvalue::Variable(right_id, right_ty, _))) => {
+                                        let right_ptr_id = self.ctxt.builder.alloc_id();
+
+                                        // load variable value
+                                        let op_load_right = OpLoad(self.ctxt.builder.define_type(&right_ty), right_ptr_id, right_id, None);
+                                        self.block.emit_instruction(op_load_right);
+
+                                        self.emit_binop(*op, (lvalue_id, lvalue_ty), (left_id, left_ty), (right_ptr_id, right_ty))?;
+                                    }
 
                                     (SpirvOperand::Constant(left_id, left_ty),
                                      SpirvOperand::Constant(right_id, right_ty)) => {
@@ -1238,20 +1264,28 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 self.block.branch_instr = Some(BranchInstruction::Unreachable(OpUnreachable));
             }
 
-            If { ref cond, targets: (_branch_true, _branch_false) } => {
+            If { ref cond, targets: (branch_true, branch_false) } => {
                 let cond = self.trans_operand(cond)?;
-                match cond {
-                    SpirvOperand::Consume(_lvalue) => {
-
+                let cond_id = match cond {
+                    SpirvOperand::Consume(SpirvLvalue::Variable(id, ty, _)) => {
+                        let load_id = self.ctxt.builder.alloc_id();
+                        self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&ty), load_id, id, None));
+                        load_id
                     },
 
-                    SpirvOperand::Constant(_id, _) => {
+                    SpirvOperand::Constant(id, _) => id,
 
-                    },
+                    _ => return Err(self.ctxt.tcx.sess.struct_span_err(terminator.source_info.span, "inspirv: Unhandled if condition operand.")),
+                };
 
-                    _ => self.ctxt.tcx.sess.span_err(terminator.source_info.span, "inspirv: Unhandled if condition operand."),
-                }
-                unimplemented!();
+                self.block.branch_instr = Some(
+                    BranchInstruction::BranchConditional(
+                        OpBranchConditional(
+                            cond_id,
+                            self.labels[branch_true],
+                            self.labels[branch_false],
+                            Vec::new(),
+                        )));
             }
 
             // &Switch { discr, adt_def, targets } => { },
@@ -1430,108 +1464,100 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
     fn emit_binop(&mut self, op: BinOp, (result_id, result_ty): IdAndType, (left_id, left_ty): IdAndType, (right_id, right_ty): IdAndType) -> PResult<'e, ()> {
         use self::SpirvType::*;
-        let left_ptr_id = self.ctxt.builder.alloc_id();
-        let right_ptr_id = self.ctxt.builder.alloc_id();
-
-        // load variable values
-        let op_load_left = OpLoad(self.ctxt.builder.define_type(&left_ty), left_ptr_id, left_id, None);
-        let op_load_right = OpLoad(self.ctxt.builder.define_type(&right_ty), right_ptr_id, right_id, None);
-        self.block.emit_instruction(op_load_left);
-        self.block.emit_instruction(op_load_right);
 
         // emit instructions
         let add_result = self.ctxt.builder.alloc_id();
         let op_binop: instruction::Instruction = match (op, &left_ty, &right_ty) {
             // arithmetic operators
             (BinOp::Add, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpIAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpIAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Add, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Sub, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpISub(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpISub(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Sub, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFSub(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFSub(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Mul, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpIMul(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpIMul(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Mul, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFMul(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFMul(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Div, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpSDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Div, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpUDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpUDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Div, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             // logical operators
             (BinOp::Eq, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpIEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpIEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Ne, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpINotEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpINotEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Lt, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpULessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpULessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Le, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpULessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpULessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Gt, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpUGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpUGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Ge, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpUGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpUGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Lt, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSLessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpSLessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Le, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSLessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpSLessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Gt, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpSGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Ge, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpSGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             // TODO: ordered or unordered?
             (BinOp::Eq, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFOrdEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Ne, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdNotEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFOrdNotEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             (BinOp::Lt, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdLessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFOrdLessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Le, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdLessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFOrdLessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Gt, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFOrdGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
             (BinOp::Ge, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_ptr_id, right_ptr_id).into()
+                OpFOrdGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
             }
 
             _ => bug!("Unexpected binop combination ({:?})", (op, left_ty, right_ty)),

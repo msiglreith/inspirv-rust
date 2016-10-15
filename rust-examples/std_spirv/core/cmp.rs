@@ -146,6 +146,10 @@ macro_rules! partial_eq_impl {
             #[inline]
             #[inspirv(compiler_builtin)]
             fn eq(&self, other: &$t) -> bool { *self == *other }
+
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn ne(&self, other: &$t) -> bool { *self != *other }
         }
     )+)
 }
