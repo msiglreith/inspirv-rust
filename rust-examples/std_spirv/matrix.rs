@@ -1,6 +1,6 @@
 
-use super::core::marker::Copy;
-use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
+use core::marker::Copy;
+use core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
 use super::{Vector2, Vector3, Vector4};
 

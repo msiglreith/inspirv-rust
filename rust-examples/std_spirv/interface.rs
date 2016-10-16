@@ -1,5 +1,5 @@
 
-use std_spirv::ops::Deref;
+use core::ops::Deref;
 
 #[inspirv(interface)]
 pub struct Attributes<T>(T);

@@ -18,6 +18,8 @@ extern crate syntax;
 extern crate rustc_const_math;
 extern crate rustc_data_structures;
 extern crate syntax_pos;
+extern crate rustc_trans;
+extern crate rustc_incremental;
 
 extern crate libc;
 

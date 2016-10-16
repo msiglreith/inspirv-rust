@@ -1,8 +1,8 @@
 
-use super::core::marker::Copy;
+use core::marker::Copy;
 use super::{Matrix2x2, Matrix3x3, Matrix4x4};
 
-use super::core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
+use core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
 #[inspirv(vector(components = 2))]
 pub struct Vector2<T: Copy> {

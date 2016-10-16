@@ -88,7 +88,7 @@ fn main() {
         }
     }
 
-    rustc_args.push("--target=etc/spirv.json".into());
+    // rustc_args.push("--target=etc/spirv.json".into());
     match rustc_driver::run_compiler(&rustc_args, &mut SpirvCompilerCalls, None, None) {
         (Ok(_), _) => process::exit(0),
         (Err(code), _) => { println!("error: {:?}", code); process::exit(code as i32) },

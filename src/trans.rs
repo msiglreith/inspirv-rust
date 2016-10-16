@@ -13,6 +13,12 @@ use rustc::util::common::time;
 use rustc_borrowck as borrowck;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use rustc::ty::subst::Substs;
+use rustc::dep_graph::DepNode;
+use rustc_trans::back::link;
+use rustc::util::sha2::Sha256;
+use rustc::util::nodemap::NodeSet;
+use rustc::session::config;
+use rustc_incremental::{self, IncrementalHashesMap};
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use std::ops::Deref;
 use std::collections::HashMap;
@@ -66,7 +72,39 @@ pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
 fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                          mir_map: &MirMap<'tcx>,
-                         _analysis: &ty::CrateAnalysis) -> Option<RawModule> {
+                         analysis: &ty::CrateAnalysis) -> Option<RawModule> {
+    let _task = tcx.dep_graph.in_task(DepNode::TransCrate);
+
+    let ty::CrateAnalysis { ref export_map, ref reachable, name, .. } = *analysis;
+
+    let check_overflow = if let Some(v) = tcx.sess.opts.debugging_opts.force_overflow_checks {
+        v
+    } else {
+        tcx.sess.opts.debug_assertions
+    };
+
+    let incremental_hashes_map = rustc_incremental::compute_incremental_hashes_map(*tcx);
+    let link_meta = link::build_link_meta(&incremental_hashes_map, name);
+
+    // Translate the metadata.
+    let metadata = time(tcx.sess.time_passes(), "write metadata", || {
+        let any_library = tcx.sess
+                        .crate_types
+                        .borrow()
+                        .iter()
+                        .any(|ty| *ty != config::CrateTypeExecutable);
+        if !any_library {
+            return Vec::new();
+        }
+
+        let ref cstore = tcx.sess.cstore;
+        cstore.encode_metadata(*tcx,
+                              &export_map,
+                              &link_meta,
+                              &reachable,
+                              &mir_map)
+    });
+
     let mut builder = ModuleBuilder::new();
     builder.with_source(SourceLanguage::SourceLanguageUnknown, VERSION_INSPIRV_RUST);
 
@@ -835,14 +873,18 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     }
 
     fn get_node_id(&self, id: DefId) -> NodeId {
-        // TODO: low-mid: unsafe! We would like to find the attributes of the current type, to look for representations as vector/matrix
-        // Dont know how to correctly retrieve this information for non-local crates, probably requires custom crate format!
-        self.tcx.map.as_local_node_id(id).expect("Id not defined in local crate!")
+        self.tcx.map.as_local_node_id(id).expect("Non local id")
     }
 
     fn get_node_attributes(&self, id: DefId) -> PResult<'e, Vec<Attribute>> {
-        let node_id = self.get_node_id(id);
-        attribute::parse(self.tcx.sess, self.tcx.map.attrs(node_id))
+        let node_id = self.tcx.map.as_local_node_id(id);
+        if let Some(node_id) = node_id {
+             attribute::parse(self.tcx.sess, self.tcx.map.attrs(node_id))
+        } else {
+            let attr = self.tcx.sess.cstore.item_attrs(id);
+            println!("{:?}", attr);
+            attribute::parse(self.tcx.sess, &attr)
+        }
     }
 
     fn rust_ty_to_spirv(&self, t: Ty<'tcx>) -> PResult<'e, Type> {
@@ -1288,7 +1330,12 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                         )));
             }
 
-            // &Switch { discr, adt_def, targets } => { },
+            Switch { ref discr, adt_def, ref targets } => {
+                let discr = self.ctxt.resolve_lvalue(discr).map(|lvalue| self.ctxt.transform_lvalue(self.block, lvalue)).expect("Unhandled lvalue");
+
+                println!("{:?}", (discr, adt_def, targets));
+            }
+
             // &SwitchInt { discr, switch_ty, values, targets } => { },
             Resume => self.block.branch_instr = Some(BranchInstruction::Return(OpReturn)),
             Drop { target, .. } => self.block.branch_instr = Some(BranchInstruction::Branch(OpBranch(self.labels[target]))),
