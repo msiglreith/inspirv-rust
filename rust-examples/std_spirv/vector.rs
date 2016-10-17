@@ -100,7 +100,7 @@ macro_rules! vector2_ops_impl {
     )*)
 }
 
-vector2_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
+// TODO: vector2_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 pub type Float2 = Vector2<f32>;
 
@@ -226,7 +226,7 @@ macro_rules! vector3_ops_impl {
     )*)
 }
 
-vector3_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
+// TODO: vector3_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 pub type Float3 = Vector3<f32>;
 
@@ -373,7 +373,7 @@ macro_rules! vector4_ops_impl {
     )*)
 }
 
-vector4_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
+// TODO: vector4_ops_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 pub type Float4 = Vector4<f32>;
 

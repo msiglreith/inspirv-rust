@@ -18,6 +18,6 @@ name = "inspirv-rust"
 log = "0.3.6"
 env_logger = "0.3.3"
 libc = "0.2"
-inspirv = { path = "../inspirv", version = "0.1.0" }
-inspirv-builder = { path = "../inspirv-builder", version = "0.1.0" }
+inspirv = { git = "https://github.com/msiglreith/inspirv.git" }
+inspirv-builder = { git = "https://github.com/msiglreith/inspirv-builder.git" }
 clippy = "*"
