@@ -22,7 +22,7 @@ use rustc_incremental::{self, IncrementalHashesMap};
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use std::ops::Deref;
 use std::collections::HashMap;
-use inspirv::instruction;
+use inspirv::{self, instruction};
 use inspirv::types::*;
 use inspirv::core::instruction::*;
 use inspirv::core::enumeration::*;
@@ -34,13 +34,15 @@ use attribute::{self, Attribute};
 use monomorphize;
 use traits;
 use error::PResult;
+use std::fs::File;
+use std::path::Path;
 
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                                     mut mir_map: &mut MirMap<'tcx>,
-                                    analysis: &ty::CrateAnalysis) -> Option<RawModule> {
+                                    analysis: &ty::CrateAnalysis) {
     let time_passes = tcx.sess.time_passes();
 
     // Run the passes that transform the MIR into a more suitable for translation
@@ -72,7 +74,7 @@ pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
 fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                          mir_map: &MirMap<'tcx>,
-                         analysis: &ty::CrateAnalysis) -> Option<RawModule> {
+                         analysis: &ty::CrateAnalysis) {
     let _task = tcx.dep_graph.in_task(DepNode::TransCrate);
 
     let ty::CrateAnalysis { ref export_map, ref reachable, name, .. } = *analysis;
@@ -116,7 +118,36 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         fn_ids: HashMap::new(),
     };
 
-    v.trans()
+    let translation = v.trans();
+
+    for crate_type in tcx.sess.crate_types.borrow().iter() {
+        match *crate_type {
+            config::CrateTypeRlib => {
+
+            }
+            
+            config::CrateTypeExecutable => {
+                if let Some(mut module) = translation {
+                    let filename = format!("{}.spv", name);
+                    let ofile = Path::new(&filename);
+                    println!("{:?}", ofile);
+                    let file = File::create(ofile).unwrap();
+
+                    module.export_binary(file);
+
+                    let file = File::open(ofile).unwrap();
+                    let mut reader = inspirv::read_binary::ReaderBinary::new(file).unwrap();
+
+                    while let Some(instr) = reader.read_instruction().unwrap() {
+                        println!("{:?}", instr);
+                    }
+                }
+            }
+            _ => { bug!("wrong crate type"); }
+        }
+    }
+
+    
 }
 
 #[derive(Clone, Debug)]

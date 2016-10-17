@@ -12,8 +12,6 @@ use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
 use rustc::mir::mir_map::MirMap;
 use std::process;
-use std::fs::File;
-use std::path::Path;
 
 struct SpirvCompilerCalls;
 
@@ -45,23 +43,7 @@ impl<'a> CompilerCalls<'a> for SpirvCompilerCalls {
                 tcx.print_debug_stats();
             }
 
-            if let Some(mut module) = trans::translate_to_spirv(&tcx, &mut mir_map_copy, state.analysis.unwrap()) {
-                let ofile = state.out_file.unwrap_or(Path::new("example.spv"));
-                println!("{:?}", ofile);
-                let file = File::create(ofile).unwrap();
-
-                module.export_binary(file);
-
-                let file = File::open(ofile).unwrap();
-                let mut reader = inspirv::read_binary::ReaderBinary::new(file).unwrap();
-
-                while let Some(instr) = reader.read_instruction().unwrap() {
-                    println!("{:?}", instr);
-                }
-            } else {
-                println!("u wot");
-            }
-            
+            trans::translate_to_spirv(&tcx, &mut mir_map_copy, state.analysis.unwrap());
         });
 
         control
