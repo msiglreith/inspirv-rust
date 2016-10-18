@@ -309,7 +309,6 @@ pub struct InspirvFnCtxt<'v, 'tcx: 'v> {
     mir_map: &'v MirMap<'tcx>,
     mir: &'v Mir<'tcx>,
     def_id: DefId,
-    node_id: NodeId,
     pub builder: &'v mut ModuleBuilder,
 
     fn_ids: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), FuncId>,
@@ -339,7 +338,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 mir_map: self.mir_map,
                 mir: mir,
                 def_id: def_id,
-                node_id: id,
                 builder: &mut self.builder,
                 fn_ids: &mut self.fn_ids,
                 substs: None,
@@ -380,15 +378,20 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
 
 impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     fn trans_static(&'e mut self, mutability: hir::Mutability) -> PResult<'e, ()> {
-        println!("{:?}", (self.node_id, mutability, self.mir));
+        println!("{:?}", (mutability, self.mir));
         Ok(())
     }
 
     fn trans_const(&'e mut self) -> PResult<'e, ()> {
         self.arg_ids = IndexVec::new();
 
-        let const_name = &*self.tcx.map.name(self.node_id).as_str();
-        let mut const_fn = self.builder.define_function_named(const_name);
+        let node_id = self.tcx.map.as_local_node_id(self.def_id);
+        let mut const_fn = if let Some(node_id) = node_id {
+            let const_name = &*self.tcx.map.name(node_id).as_str();
+            self.builder.define_function_named(const_name)
+        } else {
+            self.builder.define_function()
+        };
 
         let return_ty = self.rust_ty_to_spirv_ref(self.mir.return_ty)?;
         if return_ty.is_ref() {
@@ -408,7 +411,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
         const_fn.ret_ty = return_ty.into();
 
-        println!("{:?} {:?}", self.node_id, self.mir);
+        println!("{:?}", self.mir);
 
         self.trans(const_fn)
     }
@@ -438,7 +441,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
         self.arg_ids = IndexVec::new();
         let fn_module = {
-            let attrs = attribute::parse(self.tcx.sess, self.tcx.map.attrs(self.node_id))?;
+            let attrs = self.get_node_attributes(self.def_id)?;
 
             // We don't translate builtin functions, these will be handled internally
             if attrs.iter().any(|attr| match *attr {
@@ -448,7 +451,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 return Ok(());
             }
 
-            let fn_name = &*self.tcx.map.name(self.node_id).as_str();
+            
 
             // check if we have an entry point
             let entry_point = attrs.iter().find(|attr| match **attr {
@@ -709,6 +712,8 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 }
 
                 // Define entry point in SPIR-V
+                let node_id = self.get_node_id(self.def_id);
+                let fn_name = &*self.tcx.map.name(node_id).as_str();
                 let mut func = self.builder
                     .define_entry_point(fn_name, stage, execution_modes, interface_ids)
                     .ok()
@@ -718,7 +723,13 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 func
             } else {
                 // Standard function
-                let mut func = self.builder.define_function_named(fn_name);
+                let node_id = self.tcx.map.as_local_node_id(self.def_id);  
+                let mut func = if let Some(node_id) = node_id {
+                    let fn_name = &*self.tcx.map.name(node_id).as_str();
+                    self.builder.define_function_named(fn_name)
+                } else {
+                    self.builder.define_function()
+                };
 
                 func.params = params;
 
@@ -750,7 +761,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             func  
         };
 
-        println!("{:?}", (self.node_id, self.tcx.map.name(self.node_id).as_str(), self.mir));
+        println!("{:?}", (self.def_id, self.mir));
         self.fn_ids.insert((did, signature.clone()), fn_module.id);
         self.trans(fn_module)
     }
@@ -1462,26 +1473,50 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                             let signature = monomorphize::apply_param_substs(self.ctxt.tcx, substs, signature);
 
                             if !self.ctxt.fn_ids.contains_key(&(def_id, signature.clone())) {
-                                let mut fn_ctxt = InspirvFnCtxt {
-                                    tcx: self.ctxt.tcx,
-                                    mir_map: self.ctxt.mir_map,
-                                    mir: &self.ctxt.mir_map.map[&def_id],
-                                    def_id: def_id,
-                                    node_id: self.ctxt.get_node_id(def_id),
-                                    builder: self.ctxt.builder,
-                                    fn_ids: self.ctxt.fn_ids,
-                                    substs: Some(substs),
+                                if let Some(mir) = self.ctxt.mir_map.map.get(&def_id) {
+                                    // local crate function
+                                    let mut fn_ctxt = InspirvFnCtxt {
+                                        tcx: self.ctxt.tcx,
+                                        mir_map: self.ctxt.mir_map,
+                                        mir: mir,
+                                        def_id: def_id,
+                                        builder: self.ctxt.builder,
+                                        fn_ids: self.ctxt.fn_ids,
+                                        substs: Some(substs),
 
-                                    arg_ids: IndexVec::new(),
-                                    local_ids: IndexVec::new(),
-                                    return_ids: None,
+                                        arg_ids: IndexVec::new(),
+                                        local_ids: IndexVec::new(),
+                                        return_ids: None,
+                                    };
+
+                                    let result = fn_ctxt.trans_fn(FnTrans::Required);
+                                    if let Err(mut err) = result {
+                                        err.emit();
+                                        return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
+                                    }
+                                } else {
+                                    // function in external crate
+                                    let mir_external = self.ctxt.tcx.sess.cstore.maybe_get_item_mir(*self.ctxt.tcx, def_id).unwrap();
+                                    let mut fn_ctxt = InspirvFnCtxt {
+                                        tcx: self.ctxt.tcx,
+                                        mir_map: self.ctxt.mir_map,
+                                        mir: &mir_external,
+                                        def_id: def_id,
+                                        builder: self.ctxt.builder,
+                                        fn_ids: self.ctxt.fn_ids,
+                                        substs: Some(substs),
+
+                                        arg_ids: IndexVec::new(),
+                                        local_ids: IndexVec::new(),
+                                        return_ids: None,
+                                    };
+
+                                    let result = fn_ctxt.trans_fn(FnTrans::Required);
+                                    if let Err(mut err) = result {
+                                        err.emit();
+                                        return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
+                                    }
                                 };
-
-                                let result = fn_ctxt.trans_fn(FnTrans::Required);
-                                if let Err(mut err) = result {
-                                    err.emit();
-                                    return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
-                                }
                             }
 
                             let fn_id = self.ctxt.fn_ids[&(def_id, signature)];
