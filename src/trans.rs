@@ -14,10 +14,10 @@ use rustc_borrowck as borrowck;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use rustc::ty::subst::Substs;
 use rustc::dep_graph::DepNode;
-use rustc_trans::back::link;
-use rustc::util::sha2::Sha256;
-use rustc::util::nodemap::NodeSet;
+use rustc_trans::back::{link, archive};
+use rustc_back::tempdir::TempDir;
 use rustc::session::config;
+use rustc::session::search_paths::PathKind;
 use rustc_incremental::{self, IncrementalHashesMap};
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use std::ops::Deref;
@@ -36,6 +36,8 @@ use traits;
 use error::PResult;
 use std::fs::File;
 use std::path::Path;
+use std::env;
+use std::io::Write;
 
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
@@ -118,16 +120,59 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         fn_ids: HashMap::new(),
     };
 
-    let translation = v.trans();
+    let mut translation = v.trans();
 
     for crate_type in tcx.sess.crate_types.borrow().iter() {
         match *crate_type {
             config::CrateTypeRlib => {
+                let filename = format!("lib{}.rlib", name);
+                let ofile = Path::new(&filename);
+                println!("{:?}", ofile);
+                let cmd_path = {
+                    let mut new_path = tcx.sess.host_filesearch(PathKind::All)
+                           .get_tools_search_paths();
+                    if let Some(path) = env::var_os("PATH") {
+                        new_path.extend(env::split_paths(&path));
+                    }
+                    env::join_paths(new_path).unwrap()
+                };
 
+                let archive_config = archive::ArchiveConfig {
+                    sess: tcx.sess,
+                    dst: ofile.to_path_buf(),
+                    src: None,
+                    lib_search_paths: Vec::new(),
+                    ar_prog: link::get_ar_prog(tcx.sess),
+                    command_path: cmd_path,
+                };
+
+                let mut ab = archive::ArchiveBuilder::new(archive_config);
+
+                let tmpdir = match TempDir::new("rustc") {
+                    Ok(tmpdir) => tmpdir,
+                    Err(err) => bug!("couldn't create a temp dir: {}", err),
+                };
+
+                // Instead of putting the metadata in an object file section, rlibs
+                // contain the metadata in a separate file. We use a temp directory
+                // here so concurrent builds in the same directory don't try to use
+                // the same filename for metadata (stomping over one another)
+                let metadata_file = tmpdir.path().join(tcx.sess.cstore.metadata_filename());
+                match File::create(&metadata_file).and_then(|mut f| {
+                    f.write_all(&metadata)
+                }) {
+                    Ok(..) => {}
+                    Err(e) => {
+                        tcx.sess.fatal(&format!("failed to write {}: {}",
+                                            metadata_file.display(), e));
+                    }
+                }
+                ab.add_file(&metadata_file);
+                ab.build();
             }
             
-            config::CrateTypeExecutable => {
-                if let Some(mut module) = translation {
+            config::CrateTypeStaticlib => {
+                if let &mut Some(ref mut module) = &mut translation {
                     let filename = format!("{}.spv", name);
                     let ofile = Path::new(&filename);
                     println!("{:?}", ofile);
@@ -143,7 +188,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                     }
                 }
             }
-            _ => { bug!("wrong crate type"); }
+            _ => { bug!("wrong crate type {}", crate_type); }
         }
     }
 
@@ -913,7 +958,6 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
              attribute::parse(self.tcx.sess, self.tcx.map.attrs(node_id))
         } else {
             let attr = self.tcx.sess.cstore.item_attrs(id);
-            println!("{:?}", attr);
             attribute::parse(self.tcx.sess, &attr)
         }
     }

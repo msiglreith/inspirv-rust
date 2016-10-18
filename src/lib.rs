@@ -1,7 +1,6 @@
 #![feature(
     box_syntax,
     custom_attribute,
-    question_mark,
     rustc_private,
     slice_patterns,
 )]
@@ -14,6 +13,7 @@ extern crate rustc;
 extern crate rustc_borrowck;
 extern crate rustc_mir;
 extern crate rustc_errors;
+extern crate rustc_back;
 extern crate syntax;
 extern crate rustc_const_math;
 extern crate rustc_data_structures;

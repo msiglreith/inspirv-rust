@@ -15,3 +15,5 @@ pub mod iter;
 pub mod marker;
 pub mod ops;
 pub mod option;
+
+#[lang = "eh_personality"] pub extern fn eh_personality() {}
