@@ -1,15 +1,14 @@
 
-#![crate_name = "std_spirv"]
+#![crate_name = "std"]
 #![crate_type = "rlib"]
 
-#![feature(no_core)]
 #![feature(custom_attribute)]
 #![feature(attr_literals)]
 
 #![allow(unused_attributes)]
 
-#![no_core]
-extern crate core_spirv as core;
+#![no_std]
+extern crate core as __core;
 
 pub use core::clone;
 pub use core::cmp;

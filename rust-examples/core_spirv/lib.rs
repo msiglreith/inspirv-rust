@@ -1,4 +1,4 @@
-#![crate_name = "core_spirv"]
+#![crate_name = "core"]
 #![crate_type = "rlib"]
 #![feature(fundamental, no_core, lang_items, custom_attribute, attr_literals, optin_builtin_traits)]
 #![feature(unboxed_closures)]
@@ -8,6 +8,8 @@
 #![allow(dead_code)]
 #![allow(unused_attributes)]
 #![no_core]
+
+pub mod prelude;
 
 pub mod clone;
 pub mod cmp;
