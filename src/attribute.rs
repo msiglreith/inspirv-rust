@@ -4,7 +4,6 @@ use rustc::session::Session;
 use syntax;
 use syntax::ast::{LitKind, LitIntType, MetaItemKind, NestedMetaItemKind};
 use inspirv::core::enumeration::*;
-use inspirv_builder::module::Type;
 use intrinsic::Intrinsic;
 use error::{PResult, DiagnosticBuilderExt};
 

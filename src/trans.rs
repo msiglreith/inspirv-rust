@@ -18,8 +18,8 @@ use rustc_trans::back::{link, archive};
 use rustc_back::tempdir::TempDir;
 use rustc::session::config;
 use rustc::session::search_paths::PathKind;
-use rustc_incremental::{self, IncrementalHashesMap};
-use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
+use rustc_incremental::{self};
+use syntax::ast::{IntTy, UintTy, FloatTy};
 use std::ops::Deref;
 use std::collections::HashMap;
 use inspirv::{self, instruction};
@@ -80,13 +80,6 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     let _task = tcx.dep_graph.in_task(DepNode::TransCrate);
 
     let ty::CrateAnalysis { ref export_map, ref reachable, name, .. } = *analysis;
-
-    let check_overflow = if let Some(v) = tcx.sess.opts.debugging_opts.force_overflow_checks {
-        v
-    } else {
-        tcx.sess.opts.debug_assertions
-    };
-
     let incremental_hashes_map = rustc_incremental::compute_incremental_hashes_map(*tcx);
     let link_meta = link::build_link_meta(&incremental_hashes_map, name);
 
@@ -101,12 +94,11 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
             return Vec::new();
         }
 
-        let ref cstore = tcx.sess.cstore;
-        cstore.encode_metadata(*tcx,
-                              &export_map,
+        tcx.sess.cstore.encode_metadata(*tcx,
+                              export_map,
                               &link_meta,
-                              &reachable,
-                              &mir_map)
+                              reachable,
+                              mir_map)
     });
 
     let mut builder = ModuleBuilder::new();
@@ -172,7 +164,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
             }
             
             config::CrateTypeStaticlib => {
-                if let &mut Some(ref mut module) = &mut translation {
+                if let Some(ref mut module) = translation {
                     let filename = format!("{}.spv", name);
                     let ofile = Path::new(&filename);
                     println!("{:?}", ofile);
@@ -555,7 +547,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                     offset += field.size_of();
 
                                     // Matrix types require ColMajor/RowMajor decorations and MatrixStride [SPIR-V 2.16.2]
-                                    if let Type::Matrix { ref base, rows, cols } = *field {
+                                    if let Type::Matrix { ref base, rows, .. } = *field {
                                         let stride = Type::Vector { base: base.clone(), components: rows }.size_of();
                                         self.builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationMatrixStride(LiteralInteger(stride as u32)));
                                         self.builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationColMajor);
@@ -617,7 +609,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             // Entry Point Handling:
             //  These functions don't have actual input/output parameters
             //  We use them for the shader interface and uniforms
-            let ref return_ptr = self.mir.local_decls[Local::new(0)];
+            let return_ptr = &self.mir.local_decls[Local::new(0)];
             let mut err = None;
             let func = if let Some(&Attribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
                 match self.mir.return_ty.sty {
