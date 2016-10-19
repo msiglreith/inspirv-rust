@@ -56,42 +56,14 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                                                     components_out,
                                                                     args,
                                                                     args_ops,
-                                                                    component_ids,
-                                                              ),
-            Shuffle { components_out:4 , components_in0: 4, components_in1: 4 } => {
-                let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: 4 };
-                if args_ops[2..].iter().all(|arg| arg.is_constant()) {
-                    // all args are constants!
-                    let result_id = self.ctxt.builder.alloc_id();
-                    // components
-                    let comp_x = extract_u32_from_operand(&args[2]);
-                    if comp_x >= 8 { bug!{"inspirv: shuffle component `x` out of range {:?}", comp_x} }
-                    let comp_y = extract_u32_from_operand(&args[3]);
-                    if comp_y >= 8 { bug!{"inspirv: shuffle component `y` out of range {:?}", comp_y} }
-                    let comp_z = extract_u32_from_operand(&args[4]);
-                    if comp_z >= 8 { bug!{"inspirv: shuffle component `z` out of range {:?}", comp_z} }
-                    let comp_w = extract_u32_from_operand(&args[5]);
-                    if comp_w >= 8 { bug!{"inspirv: shuffle component `w` out of range {:?}", comp_w} }
-                    self.block.emit_instruction(
-                        OpVectorShuffle(
-                            self.ctxt.builder.define_type(&ty),
-                            result_id,
-                            component_ids[0],
-                            component_ids[1],
-                            vec![
-                                LiteralInteger(comp_x),
-                                LiteralInteger(comp_y),
-                                LiteralInteger(comp_z),
-                                LiteralInteger(comp_w),
-                            ],
-                        )
-                    );
-                    Ok(result_id)
-                } else {
-                    panic!("Unhandled dynamic `shuffle4`")
-                }
-            }
-
+                                                                    component_ids),
+            Shuffle { components_out, components_in0, components_in1 } => self.emit_shuffle(
+                                                                            components_out,
+                                                                            components_in0,
+                                                                            components_in1,
+                                                                            args,
+                                                                            args_ops,
+                                                                            component_ids),
             Add => self.emit_add(args_ops, component_ids),
             Sub => self.emit_sub(args_ops, component_ids),
             Mul => self.emit_mul(args_ops, component_ids),
@@ -101,13 +73,47 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
             Cross => self.emit_cross(args_ops, component_ids),
             OuterProduct => self.emit_outer_product(args_ops, component_ids),
             Deref => Ok(component_ids[0]),
-            _ => bug!("Unknown function call intrinsic")
+        }
+    }
+
+    fn emit_shuffle(&mut self,
+        num_output_components: u32,
+        num_input0_components: u32,
+        num_input1_components: u32,
+        args: &[Operand<'tcx>],
+        args_ops: Vec<SpirvOperand>,
+        component_ids: Vec<Id>
+    ) -> PResult<'e, Id> {
+        let ty = args_ops[0].get_ty().unwrap();
+        if args_ops[2..].iter().all(|arg| arg.is_constant()) {
+            // all args are constants!
+            let result_id = self.ctxt.builder.alloc_id();
+            // components
+            let max_index = num_input0_components + num_input1_components - 1;
+            let shuffle_components = args[2..].iter().map(|arg| {
+                let index = extract_u32_from_operand(arg);
+                if index > max_index { bug!{"inspirv: shuffle component {:?} out of range {:?}", arg, index} }
+                LiteralInteger(index)
+            }).collect::<Vec<_>>();            
+            
+            self.block.emit_instruction(
+                OpVectorShuffle(
+                    self.ctxt.builder.define_type(&ty),
+                    result_id,
+                    component_ids[0],
+                    component_ids[1],
+                    shuffle_components,
+                )
+            );
+            Ok(result_id)
+        } else {
+            panic!("Unhandled dynamic `shuffle4`")
         }
     }
 
     fn emit_swizzle(&mut self, num_input_components: u32, num_output_components: u32, args: &[Operand<'tcx>], args_ops: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'e, Id> {
         assert!(num_output_components as usize + 1 == component_ids.len());
-        let ty = Type::Vector{ base: Box::new(Type::Float(32)), components: num_output_components as u32 };
+        let ty = args_ops[0].get_ty().unwrap();
         if args_ops[1..].iter().all(|arg| arg.is_constant()) {
             // all args are constants!
             let result_id = self.ctxt.builder.alloc_id();
@@ -121,7 +127,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
             }).collect::<Vec<_>>();
             self.block.emit_instruction(
                 OpVectorShuffle(
-                    self.ctxt.builder.define_type(&ty),
+                    self.ctxt.builder.define_type(ty),
                     result_id,
                     component_ids[0],
                     component_ids[0],

@@ -244,7 +244,6 @@ pub enum SpirvOperand<'tcx> {
     Consume(SpirvLvalue),
     Constant(Id, SpirvType),
     FnCall(DefId, &'tcx Substs<'tcx>),
-    None, // TODO: temp
 }
 
 impl<'tcx> SpirvOperand<'tcx> {
@@ -252,6 +251,15 @@ impl<'tcx> SpirvOperand<'tcx> {
         match *self {
             SpirvOperand::Constant(..) => true,
             _ => false,
+        }
+    }
+
+    pub fn get_ty(&self) -> Option<&Type> {
+        match *self {
+            SpirvOperand::Consume(SpirvLvalue::Variable(_, ref ty, _)) |
+            SpirvOperand::Constant(_, ref ty) => Some(ty),
+            SpirvOperand::Consume(SpirvLvalue::AccessChain(_, _, _, ref ty)) => Some(ty),
+            _ => None,
         }
     }
 }
