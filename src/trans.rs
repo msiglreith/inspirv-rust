@@ -385,12 +385,9 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     fn trans_const(&'e mut self) -> PResult<'e, ()> {
         self.arg_ids = IndexVec::new();
 
-        let node_id = self.tcx.map.as_local_node_id(self.def_id);
-        let mut const_fn = if let Some(node_id) = node_id {
-            let const_name = &*self.tcx.map.name(node_id).as_str();
-            self.builder.define_function_named(const_name)
-        } else {
-            self.builder.define_function()
+        let mut const_fn = {
+            let const_name = self.tcx.item_name(self.def_id).as_str();
+            self.builder.define_function_named(&*const_name)
         };
 
         let return_ty = self.rust_ty_to_spirv_ref(self.mir.return_ty)?;
@@ -500,30 +497,11 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                 let struct_ty_id = struct_ty.ty_to_def_id().unwrap();
                                 let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                     let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs))?;
-                                    let node_id = self.get_node_id(struct_ty_id);
-                                    let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
+                                    let name = format!("{}_{}", self.tcx.item_name(struct_ty_id).as_str(), field.name.as_str());
+
                                     let id = self.builder.define_variable(name.as_str(), ty.clone(),
                                                                  StorageClass::StorageClassInput);
-
-                                    // HELP! A nicer way to get the attributes?
-                                    // Get struct field attributes
-                                    let node = self.tcx.map.get(node_id);
-                                    let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
-                                    let field_attrs = {
-                                        if let hir::map::Node::NodeItem(item) = node {
-                                            if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
-                                                let field = variant_data.fields().iter()
-                                                                        .find(|field| field.id == field_id)
-                                                                        .expect("Unable to find struct field by id");
-                                                attribute::parse(self.tcx.sess, &*field.attrs)?
-                                            } else {
-                                                bug!("Struct item node should be a struct {:?}", item.node)
-                                            }
-                                        } else {
-                                            bug!("Struct node should be a NodeItem {:?}", node)
-                                        }
-                                    };
-
+                                    let field_attrs = attribute::parse(self.tcx.sess, &self.tcx.get_attrs(field.did))?;
                                     for attr in field_attrs {
                                         match attr {
                                             Attribute::Location { location } => {
@@ -556,8 +534,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                             let struct_ty_id = struct_ty.ty_to_def_id().unwrap();
                             if let ty::TyAdt(adt, _subs) = struct_ty.sty {
                                 let ty = self.rust_ty_to_spirv(struct_ty)?;
-                                let node_id = self.get_node_id(struct_ty_id);
-                                let ty_id = self.builder.define_named_type(&ty, &*self.tcx.map.name(node_id).as_str());
+                                let ty_id = self.builder.define_named_type(&ty, &*self.tcx.item_name(struct_ty_id).as_str());
                                 let id = self.builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
                                 self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty.clone())))));
 
@@ -585,8 +562,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                     }
                                 }
 
-                                let attrs = attribute::parse(self.tcx.sess, self.tcx.map.attrs(node_id))?;
-
+                                let attrs = attribute::parse(self.tcx.sess, &self.tcx.get_attrs(struct_ty_id))?;
                                 for attr in attrs {
                                     if let Attribute::Descriptor { set, binding } = attr {
                                         self.builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
@@ -649,32 +625,13 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         if let Some(ty_id) = self.mir.return_ty.ty_to_def_id() {
                             let interfaces = adt.struct_variant().fields.iter().map(|field| {
                                 let ty = self.rust_ty_to_spirv(field.ty(*self.tcx, subs))?;
-                                let node_id = self.get_node_id(ty_id);
-                                let name = format!("{}_{}", self.tcx.map.name(node_id), field.name.as_str());
+                                let name = format!("{}_{}", &*self.tcx.item_name(ty_id).as_str(), field.name.as_str());
                                 let id = self.builder.define_variable(name.as_str(), ty.clone(),
                                                              StorageClass::StorageClassOutput);
 
-                                // HELP! A nicer way to get the attributes?
-                                // Get struct field attributes
-                                let node = self.tcx.map.get(node_id);
-                                let field_id = self.tcx.map.as_local_node_id(field.did).unwrap();
-                                let field_attrs = {
-                                    if let hir::map::Node::NodeItem(item) = node {
-                                        if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
-                                            let field = variant_data.fields().iter()
-                                                                    .find(|field| field.id == field_id)
-                                                                    .expect("Unable to find struct field by id");
-                                            attribute::parse(self.tcx.sess, &*field.attrs)?
-                                        } else {
-                                            bug!("Struct item node should be a struct {:?}", item.node)
-                                        }
-                                    } else {
-                                        bug!("Struct node should be a NodeItem {:?}", node)
-                                    }
-                                };
 
+                                let field_attrs = attribute::parse(self.tcx.sess, &self.tcx.get_attrs(field.did))?;
                                 let mut attribute_loc = None;
-
                                 for attr in field_attrs {
                                     match attr {
                                         Attribute::Location { location } => { attribute_loc = Some(location); }
@@ -712,10 +669,9 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 }
 
                 // Define entry point in SPIR-V
-                let node_id = self.get_node_id(self.def_id);
-                let fn_name = &*self.tcx.map.name(node_id).as_str();
+                let fn_name = self.tcx.item_name(self.def_id).as_str();
                 let mut func = self.builder
-                    .define_entry_point(fn_name, stage, execution_modes, interface_ids)
+                    .define_entry_point(&*fn_name, stage, execution_modes, interface_ids)
                     .ok()
                     .unwrap();
 
@@ -723,12 +679,9 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 func
             } else {
                 // Standard function
-                let node_id = self.tcx.map.as_local_node_id(self.def_id);  
-                let mut func = if let Some(node_id) = node_id {
-                    let fn_name = &*self.tcx.map.name(node_id).as_str();
-                    self.builder.define_function_named(fn_name)
-                } else {
-                    self.builder.define_function()
+                let mut func = {
+                    let fn_name = self.tcx.item_name(self.def_id).as_str();
+                    self.builder.define_function_named(&*fn_name)
                 };
 
                 func.params = params;
@@ -957,10 +910,6 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             },
             _ => lvalue
         }
-    }
-
-    fn get_node_id(&self, id: DefId) -> NodeId {
-        self.tcx.map.as_local_node_id(id).expect("Non local id")
     }
 
     fn get_node_attributes(&self, id: DefId) -> PResult<'e, Vec<Attribute>> {
