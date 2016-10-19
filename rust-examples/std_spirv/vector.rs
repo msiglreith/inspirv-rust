@@ -97,6 +97,12 @@ macro_rules! vector2_ops_impl {
                 *self = *self - rhs;
             }
         }
+
+        impl Mul<Vector2<$t>> for $t {
+            type Output= Vector2<$t>;
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Vector2<$t>) -> Self::Output { loop {} }
+        }
     )*)
 }
 
@@ -222,6 +228,12 @@ macro_rules! vector3_ops_impl {
             fn sub_assign(&mut self, rhs: Vector3<$t>) {
                 *self = *self - rhs;
             }
+        }
+
+        impl Mul<Vector3<$t>> for $t {
+            type Output= Vector3<$t>;
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Vector3<$t>) -> Self::Output { loop {} }
         }
     )*)
 }
@@ -369,6 +381,13 @@ macro_rules! vector4_ops_impl {
             fn sub_assign(&mut self, rhs: Vector4<$t>) {
                 *self = *self - rhs;
             }
+        }
+
+        impl Mul<Vector4<$t>> for $t {
+            type Output = Vector4<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Vector4<$t>) -> Self::Output { loop {} }
         }
     )*)
 }

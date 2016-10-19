@@ -21,6 +21,13 @@ macro_rules! matrix2x2_ops_impl {
             fn add(self, _rhs: Matrix2x2<$t>) -> Self::Output { loop {} }
         }
 
+        impl AddAssign for Matrix2x2<$t> {
+            #[inline]
+            fn add_assign(&mut self, rhs: Matrix2x2<$t>) {
+                *self = *self + rhs;
+            }
+        }
+
         impl Sub for Matrix2x2<$t> {
             type Output = Matrix2x2<$t>;
 
@@ -28,11 +35,25 @@ macro_rules! matrix2x2_ops_impl {
             fn sub(self, _rhs: Matrix2x2<$t>) -> Self::Output { loop {} }
         }
 
+        impl SubAssign for Matrix2x2<$t> {
+            #[inline]
+            fn sub_assign(&mut self, rhs: Matrix2x2<$t>) {
+                *self = *self - rhs;
+            }
+        }
+
         impl Mul<$t> for Matrix2x2<$t> {
             type Output = Matrix2x2<$t>;
 
             #[inspirv(intrinsic(mul))]
             fn mul(self, _rhs: $t) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Matrix2x2<$t>> for $t {
+            type Output = Matrix2x2<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Matrix2x2<$t>) -> Self::Output { loop {} }
         }
 
         impl Mul<Vector2<$t>> for Matrix2x2<$t> {
@@ -81,6 +102,13 @@ macro_rules! matrix3x3_ops_impl {
             fn add(self, _rhs: Matrix3x3<$t>) -> Self::Output { loop {} }
         }
 
+        impl AddAssign for Matrix3x3<$t> {
+            #[inline]
+            fn add_assign(&mut self, rhs: Matrix3x3<$t>) {
+                *self = *self + rhs;
+            }
+        }
+
         impl Sub for Matrix3x3<$t> {
             type Output = Matrix3x3<$t>;
 
@@ -88,11 +116,25 @@ macro_rules! matrix3x3_ops_impl {
             fn sub(self, _rhs: Matrix3x3<$t>) -> Self::Output { loop {} }
         }
 
+        impl SubAssign for Matrix3x3<$t> {
+            #[inline]
+            fn sub_assign(&mut self, rhs: Matrix3x3<$t>) {
+                *self = *self - rhs;
+            }
+        }
+
         impl Mul<$t> for Matrix3x3<$t> {
             type Output = Matrix3x3<$t>;
 
             #[inspirv(intrinsic(mul))]
             fn mul(self, _rhs: $t) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Matrix3x3<$t>> for $t {
+            type Output = Matrix3x3<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Matrix3x3<$t>) -> Self::Output { loop {} }
         }
 
         impl Mul<Vector3<$t>> for Matrix3x3<$t> {
@@ -142,6 +184,13 @@ macro_rules! matrix4x4_ops_impl {
             fn add(self, _rhs: Matrix4x4<$t>) -> Self::Output { loop {} }
         }
 
+        impl AddAssign for Matrix4x4<$t> {
+            #[inline]
+            fn add_assign(&mut self, rhs: Matrix4x4<$t>) {
+                *self = *self + rhs;
+            }
+        }
+
         impl Sub for Matrix4x4<$t> {
             type Output = Matrix4x4<$t>;
 
@@ -149,11 +198,25 @@ macro_rules! matrix4x4_ops_impl {
             fn sub(self, _rhs: Matrix4x4<$t>) -> Self::Output { loop {} }
         }
 
+        impl SubAssign for Matrix4x4<$t> {
+            #[inline]
+            fn sub_assign(&mut self, rhs: Matrix4x4<$t>) {
+                *self = *self - rhs;
+            }
+        }
+
         impl Mul<$t> for Matrix4x4<$t> {
             type Output = Matrix4x4<$t>;
 
             #[inspirv(intrinsic(mul))]
             fn mul(self, _rhs: $t) -> Self::Output { loop {} }
+        }
+
+        impl Mul<Matrix4x4<$t>> for $t {
+            type Output = Matrix4x4<$t>;
+
+            #[inspirv(intrinsic(mul))]
+            fn mul(self, _rhs: Matrix4x4<$t>) -> Self::Output { loop {} }
         }
 
         impl Mul<Vector4<$t>> for Matrix4x4<$t> {
