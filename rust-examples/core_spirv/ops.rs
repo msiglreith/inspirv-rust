@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::marker::Sized;
-
 /// The `Add` trait is used to specify the functionality of `+`.
 ///
 /// # Examples
@@ -388,6 +386,49 @@ macro_rules! div_impl_float {
 
 div_impl_float! { f32 f64 }
 
+/// The `Rem` trait is used to specify the functionality of `%`.
+///
+/// # Examples
+///
+/// This example implements `Rem` on a `SplitSlice` object. After `Rem` is
+/// implemented, one can use the `%` operator to find out what the remaining
+/// elements of the slice would be after splitting it into equal slices of a
+/// given length.
+///
+/// ```
+/// use std::ops::Rem;
+///
+/// #[derive(PartialEq, Debug)]
+/// struct SplitSlice<'a, T: 'a> {
+///     slice: &'a [T],
+/// }
+///
+/// impl<'a, T> Rem<usize> for SplitSlice<'a, T> {
+///     type Output = SplitSlice<'a, T>;
+///
+///     fn rem(self, modulus: usize) -> Self {
+///         let len = self.slice.len();
+///         let rem = len % modulus;
+///         let start = len - rem;
+///         SplitSlice {slice: &self.slice[start..]}
+///     }
+/// }
+///
+/// // If we were to divide &[0, 1, 2, 3, 4, 5, 6, 7] into slices of size 3,
+/// // the remainder would be &[6, 7]
+/// assert_eq!(SplitSlice { slice: &[0, 1, 2, 3, 4, 5, 6, 7] } % 3,
+///            SplitSlice { slice: &[6, 7] });
+/// ```
+#[lang = "rem"]
+pub trait Rem<RHS=Self> {
+    /// The resulting type after applying the `%` operator    
+    type Output = Self;
+
+    /// The method for the `%` operator    
+    fn rem(self, rhs: RHS) -> Self::Output;
+}
+
+
 /// The `Neg` trait is used to specify the functionality of unary `-`.
 ///
 /// # Examples
@@ -503,30 +544,6 @@ pub trait Not {
 ///
 /// In this example, the `BitAnd` trait is implemented for a `BooleanVector`
 /// struct.
-///
-/// ```
-/// use std::ops::BitAnd;
-///
-/// #[derive(Debug, PartialEq)]
-/// struct BooleanVector(Vec<bool>);
-///
-/// impl BitAnd for BooleanVector {
-///     type Output = Self;
-///
-///     fn bitand(self, BooleanVector(rhs): Self) -> Self {
-///         let BooleanVector(lhs) = self;
-///         assert_eq!(lhs.len(), rhs.len());
-///         BooleanVector(lhs.iter().zip(rhs.iter()).map(|(x, y)| *x && *y).collect())
-///     }
-/// }
-///
-/// fn main() {
-///     let bv1 = BooleanVector(vec![true, true, false, false]);
-///     let bv2 = BooleanVector(vec![true, false, true, false]);
-///     let expected = BooleanVector(vec![true, false, false, false]);
-///     assert_eq!(bv1 & bv2, expected);
-/// }
-/// ```
 #[lang = "bitand"]
 pub trait BitAnd<RHS=Self> {
     /// The resulting type after applying the `&` operator
@@ -564,33 +581,6 @@ pub trait BitAnd<RHS=Self> {
 ///     assert_eq!(Scalar(false) | Scalar(false), Scalar(false));
 /// }
 /// ```
-///
-/// In this example, the `BitOr` trait is implemented for a `BooleanVector`
-/// struct.
-///
-/// ```
-/// use std::ops::BitOr;
-///
-/// #[derive(Debug, PartialEq)]
-/// struct BooleanVector(Vec<bool>);
-///
-/// impl BitOr for BooleanVector {
-///     type Output = Self;
-///
-///     fn bitor(self, BooleanVector(rhs): Self) -> Self {
-///         let BooleanVector(lhs) = self;
-///         assert_eq!(lhs.len(), rhs.len());
-///         BooleanVector(lhs.iter().zip(rhs.iter()).map(|(x, y)| *x || *y).collect())
-///     }
-/// }
-///
-/// fn main() {
-///     let bv1 = BooleanVector(vec![true, true, false, false]);
-///     let bv2 = BooleanVector(vec![true, false, true, false]);
-///     let expected = BooleanVector(vec![true, true, true, false]);
-///     assert_eq!(bv1 | bv2, expected);
-/// }
-/// ```
 #[lang = "bitor"]
 pub trait BitOr<RHS=Self> {
     /// The resulting type after applying the `|` operator
@@ -598,6 +588,123 @@ pub trait BitOr<RHS=Self> {
 
     /// The method for the `|` operator
     fn bitor(self, rhs: RHS) -> Self::Output;
+}
+
+
+/// The `BitXor` trait is used to specify the functionality of `^`.
+///
+/// # Examples
+///
+/// In this example, the `^` operator is lifted to a trivial `Scalar` type.
+///
+/// ```
+/// use std::ops::BitXor;
+///
+/// #[derive(Debug, PartialEq)]
+/// struct Scalar(bool);
+///
+/// impl BitXor for Scalar {
+///     type Output = Self;
+///
+///     // rhs is the "right-hand side" of the expression `a ^ b`
+///     fn bitxor(self, rhs: Self) -> Self {
+///         Scalar(self.0 ^ rhs.0)
+///     }
+/// }
+///
+/// fn main() {
+///     assert_eq!(Scalar(true) ^ Scalar(true), Scalar(false));
+///     assert_eq!(Scalar(true) ^ Scalar(false), Scalar(true));
+///     assert_eq!(Scalar(false) ^ Scalar(true), Scalar(true));
+///     assert_eq!(Scalar(false) ^ Scalar(false), Scalar(false));
+/// }
+/// ```
+#[lang = "bitxor"]
+pub trait BitXor<RHS=Self> {
+    /// The resulting type after applying the `^` operator    
+    type Output;
+
+    /// The method for the `^` operator    
+    fn bitxor(self, rhs: RHS) -> Self::Output;
+}
+
+
+/// The `Shl` trait is used to specify the functionality of `<<`.
+///
+/// # Examples
+///
+/// An implementation of `Shl` that lifts the `<<` operation on integers to a
+/// `Scalar` struct.
+///
+/// ```
+/// use std::ops::Shl;
+///
+/// #[derive(PartialEq, Debug)]
+/// struct Scalar(usize);
+///
+/// impl Shl<Scalar> for Scalar {
+///     type Output = Self;
+///
+///     fn shl(self, Scalar(rhs): Self) -> Scalar {
+///         let Scalar(lhs) = self;
+///         Scalar(lhs << rhs)
+///     }
+/// }
+/// fn main() {
+///     assert_eq!(Scalar(4) << Scalar(2), Scalar(16));
+/// }
+/// ```
+#[lang = "shl"]
+pub trait Shl<RHS> {
+    /// The resulting type after applying the `<<` operator    
+    type Output;
+
+    /// The method for the `<<` operator    
+    fn shl(self, rhs: RHS) -> Self::Output;
+}
+
+/// The `Shr` trait is used to specify the functionality of `>>`.
+///
+/// # Examples
+///
+/// An implementation of `Shr` that lifts the `>>` operation on integers to a
+/// `Scalar` struct.
+///
+/// ```
+/// use std::ops::Shr;
+///
+/// #[derive(PartialEq, Debug)]
+/// struct Scalar(usize);
+///
+/// impl Shr<Scalar> for Scalar {
+///     type Output = Self;
+///
+///     fn shr(self, Scalar(rhs): Self) -> Scalar {
+///         let Scalar(lhs) = self;
+///         Scalar(lhs >> rhs)
+///     }
+/// }
+/// fn main() {
+///     assert_eq!(Scalar(16) >> Scalar(2), Scalar(4));
+/// }
+/// ```
+///
+/// An implementation of `Shr` that spins a vector rightward by a given amount.
+///
+/// ```
+/// use std::ops::Shr;
+///
+/// #[derive(PartialEq, Debug)]
+/// struct SpinVector<T: Clone> {
+///     vec: Vec<T>,
+/// }
+#[lang = "shr"]
+pub trait Shr<RHS> {
+    /// The resulting type after applying the `>>` operator    
+    type Output;
+
+    /// The method for the `>>` operator    
+    fn shr(self, rhs: RHS) -> Self::Output;
 }
 
 /// The `AddAssign` trait is used to specify the functionality of `+=`.
@@ -706,6 +813,30 @@ macro_rules! sub_assign_impl {
 
 sub_assign_impl! { usize u8 u16 u32 u64 isize i8 i16 i32 i64 f32 f64 }
 
+/// The `MulAssign` trait is used to specify the functionality of `*=`.
+///
+/// # Examples
+///
+/// A trivial implementation of `MulAssign`. When `Foo *= Foo` happens, it ends up
+/// calling `mul_assign`, and therefore, `main` prints `Multiplying!`.
+///
+/// ```
+/// use std::ops::MulAssign;
+///
+/// struct Foo;
+///
+/// impl MulAssign for Foo {
+///     fn mul_assign(&mut self, _rhs: Foo) {
+///         println!("Multiplying!");
+///     }
+/// }
+///
+/// # #[allow(unused_assignments)]
+/// fn main() {
+///     let mut foo = Foo;
+///     foo *= Foo;
+/// }
+/// ```
 #[lang = "mul_assign"]
 pub trait MulAssign<Rhs=Self> {
     fn mul_assign(&mut self, Rhs);
@@ -717,6 +848,30 @@ impl MulAssign for isize {
     fn mul_assign(&mut self, other: isize) { *self *= other }
 }
 
+/// The `DivAssign` trait is used to specify the functionality of `/=`.
+///
+/// # Examples
+///
+/// A trivial implementation of `DivAssign`. When `Foo /= Foo` happens, it ends up
+/// calling `div_assign`, and therefore, `main` prints `Dividing!`.
+///
+/// ```
+/// use std::ops::DivAssign;
+///
+/// struct Foo;
+///
+/// impl DivAssign for Foo {
+///     fn div_assign(&mut self, _rhs: Foo) {
+///         println!("Dividing!");
+///     }
+/// }
+///
+/// # #[allow(unused_assignments)]
+/// fn main() {
+///     let mut foo = Foo;
+///     foo /= Foo;
+/// }
+/// ```
 #[lang = "div_assign"]
 pub trait DivAssign<Rhs=Self> {
     fn div_assign(&mut self, Rhs);
@@ -726,6 +881,199 @@ impl DivAssign for isize {
     #[inline]
     #[inspirv(compiler_builtin)]
     fn div_assign(&mut self, other: isize) { *self /= other }
+}
+
+/// The `RemAssign` trait is used to specify the functionality of `%=`.
+///
+/// # Examples
+///
+/// A trivial implementation of `RemAssign`. When `Foo %= Foo` happens, it ends up
+/// calling `rem_assign`, and therefore, `main` prints `Remainder-ing!`.
+///
+/// ```
+/// use std::ops::RemAssign;
+///
+/// struct Foo;
+///
+/// impl RemAssign for Foo {
+///     fn rem_assign(&mut self, _rhs: Foo) {
+///         println!("Remainder-ing!");
+///     }
+/// }
+///
+/// # #[allow(unused_assignments)]
+/// fn main() {
+///     let mut foo = Foo;
+///     foo %= Foo;
+/// }
+/// ```
+#[lang = "rem_assign"]
+pub trait RemAssign<Rhs=Self> {
+    /// The method for the `%=` operator    
+    fn rem_assign(&mut self, Rhs);
+}
+
+/// The `BitAndAssign` trait is used to specify the functionality of `&=`.
+///
+/// # Examples
+///
+/// In this example, the `&=` operator is lifted to a trivial `Scalar` type.
+///
+/// ```
+/// use std::ops::BitAndAssign;
+///
+/// #[derive(Debug, PartialEq)]
+/// struct Scalar(bool);
+///
+/// impl BitAndAssign for Scalar {
+///     // rhs is the "right-hand side" of the expression `a &= b`
+///     fn bitand_assign(&mut self, rhs: Self) {
+///         *self = Scalar(self.0 & rhs.0)
+///     }
+/// }
+///
+/// fn main() {
+///     let mut scalar = Scalar(true);
+///     scalar &= Scalar(true);
+///     assert_eq!(scalar, Scalar(true));
+///
+///     let mut scalar = Scalar(true);
+///     scalar &= Scalar(false);
+///     assert_eq!(scalar, Scalar(false));
+///
+///     let mut scalar = Scalar(false);
+///     scalar &= Scalar(true);
+///     assert_eq!(scalar, Scalar(false));
+///
+///     let mut scalar = Scalar(false);
+///     scalar &= Scalar(false);
+///     assert_eq!(scalar, Scalar(false));
+/// }
+/// ```
+#[lang = "bitand_assign"]
+pub trait BitAndAssign<Rhs=Self> {
+    /// The method for the `&` operator    
+    fn bitand_assign(&mut self, Rhs);
+}
+
+/// The `BitOrAssign` trait is used to specify the functionality of `|=`.
+///
+/// # Examples
+///
+/// A trivial implementation of `BitOrAssign`. When `Foo |= Foo` happens, it ends up
+/// calling `bitor_assign`, and therefore, `main` prints `Bitwise Or-ing!`.
+///
+/// ```
+/// use std::ops::BitOrAssign;
+///
+/// struct Foo;
+///
+/// impl BitOrAssign for Foo {
+///     fn bitor_assign(&mut self, _rhs: Foo) {
+///         println!("Bitwise Or-ing!");
+///     }
+/// }
+///
+/// # #[allow(unused_assignments)]
+/// fn main() {
+///     let mut foo = Foo;
+///     foo |= Foo;
+/// }
+/// ```
+#[lang = "bitor_assign"]
+pub trait BitOrAssign<Rhs=Self> {
+    /// The method for the `|=` operator    
+    fn bitor_assign(&mut self, Rhs);
+}
+
+/// The `BitXorAssign` trait is used to specify the functionality of `^=`.
+///
+/// # Examples
+///
+/// A trivial implementation of `BitXorAssign`. When `Foo ^= Foo` happens, it ends up
+/// calling `bitxor_assign`, and therefore, `main` prints `Bitwise Xor-ing!`.
+///
+/// ```
+/// use std::ops::BitXorAssign;
+///
+/// struct Foo;
+///
+/// impl BitXorAssign for Foo {
+///     fn bitxor_assign(&mut self, _rhs: Foo) {
+///         println!("Bitwise Xor-ing!");
+///     }
+/// }
+///
+/// # #[allow(unused_assignments)]
+/// fn main() {
+///     let mut foo = Foo;
+///     foo ^= Foo;
+/// }
+/// ```
+#[lang = "bitxor_assign"]
+pub trait BitXorAssign<Rhs=Self> {
+    /// The method for the `^=` operator    
+    fn bitxor_assign(&mut self, Rhs);
+}
+
+/// The `ShlAssign` trait is used to specify the functionality of `<<=`.
+///
+/// # Examples
+///
+/// A trivial implementation of `ShlAssign`. When `Foo <<= Foo` happens, it ends up
+/// calling `shl_assign`, and therefore, `main` prints `Shifting left!`.
+///
+/// ```
+/// use std::ops::ShlAssign;
+///
+/// struct Foo;
+///
+/// impl ShlAssign<Foo> for Foo {
+///     fn shl_assign(&mut self, _rhs: Foo) {
+///         println!("Shifting left!");
+///     }
+/// }
+///
+/// # #[allow(unused_assignments)]
+/// fn main() {
+///     let mut foo = Foo;
+///     foo <<= Foo;
+/// }
+/// ```
+#[lang = "shl_assign"]
+pub trait ShlAssign<Rhs> {
+    /// The method for the `<<=` operator    
+    fn shl_assign(&mut self, Rhs);
+}
+
+/// The `ShrAssign` trait is used to specify the functionality of `>>=`.
+///
+/// # Examples
+///
+/// A trivial implementation of `ShrAssign`. When `Foo >>= Foo` happens, it ends up
+/// calling `shr_assign`, and therefore, `main` prints `Shifting right!`.
+///
+/// ```
+/// use std::ops::ShrAssign;
+///
+/// struct Foo;
+///
+/// impl ShrAssign<Foo> for Foo {
+///     fn shr_assign(&mut self, _rhs: Foo) {
+///         println!("Shifting right!");
+///     }
+/// }
+///
+/// # #[allow(unused_assignments)]
+/// fn main() {
+///     let mut foo = Foo;
+///     foo >>= Foo;
+/// }
+/// ```
+#[lang = "shr_assign"]
+pub trait ShrAssign<Rhs=Self> {
+    /// The method for the `>>=` operator    
+    fn shr_assign(&mut self, Rhs);
 }
 
 /// The `Deref` trait is used to specify the functionality of dereferencing
