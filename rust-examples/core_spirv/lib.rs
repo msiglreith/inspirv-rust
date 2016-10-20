@@ -4,10 +4,14 @@
 #![feature(unboxed_closures)]
 #![feature(allow_internal_unstable)]
 #![feature(on_unimplemented)]
+#![feature(prelude_import)]
 #![feature(specialization)]
 #![allow(dead_code)]
 #![allow(unused_attributes)]
 #![no_core]
+
+#[prelude_import]
+use prelude::v1::*;
 
 pub mod prelude;
 

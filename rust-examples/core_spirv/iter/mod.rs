@@ -7,3 +7,10 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
+
+mod iterator;
+mod range;
+mod traits;
+
+pub use self::iterator::Iterator;
+pub use self::traits::IntoIterator;

@@ -149,6 +149,7 @@
 // which basically means it must be `Option`.
 
 /// The `Option` type. See [the module level documentation](index.html) for more.
+#[inspirv(option)]
 pub enum Option<T> {
     /// No value
     None,
