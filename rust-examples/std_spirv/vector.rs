@@ -4,12 +4,12 @@ use super::{Matrix2x2, Matrix3x3, Matrix4x4};
 
 use core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
+#[derive(Copy)]
 #[inspirv(vector(components = 2))]
 pub struct Vector2<T: Copy> {
     pub x: T,
     pub y: T,
 }
-impl<T: Copy> Copy for Vector2<T> {}
 
 macro_rules! vector2_impl {
     ($($t:ty)*) => ($(
@@ -121,13 +121,13 @@ impl Float2 {
     pub fn normalize(self) -> Float2 { loop {} }
 }
 
+#[derive(Copy)]
 #[inspirv(vector(components = 3))]
 pub struct Vector3<T: Copy> {
     pub x: T,
     pub y: T,
     pub z: T,
 }
-impl<T: Copy> Copy for Vector3<T> {}
 
 macro_rules! vector3_impl {
     ($($t:ty)*) => ($(
@@ -256,6 +256,7 @@ impl Float3 {
     pub fn cross(self, _rhs: Float3) -> Float3 { loop {} }
 }
 
+#[derive(Copy)]
 #[inspirv(vector(components = 4))]
 pub struct Vector4<T: Copy> {
     pub x: T,
@@ -263,7 +264,6 @@ pub struct Vector4<T: Copy> {
     pub z: T,
     pub w: T,
 }
-impl<T: Copy> Copy for Vector4<T> {}
 
 macro_rules! vector4_impl {
     ($($t:ty)*) => ($(

@@ -4,13 +4,12 @@ use core::ops::{Add, AddAssign, Sub, SubAssign, Mul, MulAssign};
 
 use super::{Vector2, Vector3, Vector4};
 
+#[derive(Copy)]
 #[inspirv(matrix(rows = 2, cols = 2))]
 pub struct Matrix2x2<T: Copy> {
     pub col0: Vector2<T>,
     pub col1: Vector2<T>,
 }
-
-impl<T: Copy> Copy for Matrix2x2<T> {}
 
 macro_rules! matrix2x2_ops_impl {
     ($($t:ty)*) => ($(
@@ -84,14 +83,13 @@ impl Float2x2 {
     pub fn inverse(self) -> Float2x2 { loop {} }
 }
 
+#[derive(Copy)]
 #[inspirv(matrix(rows = 3, cols = 3))]
 pub struct Matrix3x3<T: Copy> {
     pub col0: Vector3<T>,
     pub col1: Vector3<T>,
     pub col2: Vector3<T>,
 }
-
-impl<T: Copy> Copy for Matrix3x3<T> {}
 
 macro_rules! matrix3x3_ops_impl {
     ($($t:ty)*) => ($(
@@ -165,6 +163,7 @@ impl Float3x3 {
     pub fn inverse(self) -> Float3x3 { loop {} }
 }
 
+#[derive(Copy)]
 #[inspirv(matrix(rows = 4, cols = 4))]
 pub struct Matrix4x4<T: Copy> {
     pub col0: Vector4<T>,
@@ -172,8 +171,6 @@ pub struct Matrix4x4<T: Copy> {
     pub col2: Vector4<T>,
     pub col3: Vector4<T>,
 }
-
-impl<T: Copy> Copy for Matrix4x4<T> {}
 
 macro_rules! matrix4x4_ops_impl {
     ($($t:ty)*) => ($(
