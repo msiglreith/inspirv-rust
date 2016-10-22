@@ -410,6 +410,13 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
         println!("{:?}", self.mir);
 
+        let signature = ty::FnSig {
+            inputs: Vec::new(),
+            output: self.mir.return_ty,
+            variadic: false,
+        };
+
+        self.fn_ids.insert((self.def_id, signature), const_fn.id);
         self.trans(const_fn)
     }
 
@@ -1110,21 +1117,13 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         self.block.emit_instruction(OpStore(lvalue_id, composite_id, None));
                                     }
                                     SpirvOperand::FnCall(mut def_id, substs) => {
-                                        // TODO: handle generics
-                                        let fn_ty = self.ctxt.tcx.lookup_item_type(def_id).ty;
-                                        print!("{:?}", fn_ty);
-                                        let signature = fn_ty.fn_sig().skip_binder();
-
-                                        let (substs, signature) = if self.ctxt.tcx.trait_of_item(def_id).is_some() {
-                                            let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.ctxt.tcx, def_id, substs);
-                                            let ty = self.ctxt.tcx.lookup_item_type(resolved_def_id).ty;
-                                            // TODO: investigate rustc trans use of liberate_bound_regions or similar here
-                                            let signature = ty.fn_sig().skip_binder();
-
-                                            def_id = resolved_def_id;
-                                            (resolved_substs, signature)
-                                        } else {
-                                            (substs, signature)
+                                        // Constants (?)
+                                        let ty = self.ctxt.tcx.lookup_item_type(def_id).ty;
+                                        let ty = monomorphize::apply_ty_substs(self.ctxt.tcx, substs, ty);
+                                        let signature = ty::FnSig {
+                                            inputs: Vec::new(),
+                                            output: ty,
+                                            variadic: false,
                                         };
 
                                         let attrs = self.ctxt.get_node_attributes(def_id)?;
@@ -1138,8 +1137,6 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                             self.emit_intrinsic(intrinsic, &[])?
                                         } else {
                                             // 'normal' function call
-                                            let signature = monomorphize::apply_param_substs(self.ctxt.tcx, substs, signature);
-
                                             if !self.ctxt.fn_ids.contains_key(&(def_id, signature.clone())) {
                                                 if let Some(mir) = self.ctxt.mir_map.map.get(&def_id) {
                                                     // local crate function
@@ -1157,7 +1154,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                                         return_ids: None,
                                                     };
 
-                                                    let result = fn_ctxt.trans_fn(FnTrans::Required);
+                                                    let result = fn_ctxt.trans_const();
                                                     if let Err(mut err) = result {
                                                         err.emit();
                                                         return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
@@ -1179,7 +1176,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                                         return_ids: None,
                                                     };
 
-                                                    let result = fn_ctxt.trans_fn(FnTrans::Required);
+                                                    let result = fn_ctxt.trans_const();
                                                     if let Err(mut err) = result {
                                                         err.emit();
                                                         return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
