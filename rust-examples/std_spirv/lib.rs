@@ -16,6 +16,9 @@ pub use core::marker;
 pub use core::ops;
 pub use core::option;
 
+pub use core::f32;
+pub use core::f64;
+
 pub mod interface;
 pub mod matrix;
 pub mod vector;
