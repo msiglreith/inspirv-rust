@@ -33,7 +33,7 @@ pub enum Intrinsic {
 }
 
 impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
-    pub fn emit_intrinsic(&mut self, intrinsic: &Intrinsic, args: &[Operand<'tcx>]) -> PResult<'e, Id> {
+    pub fn emit_intrinsic(&mut self, intrinsic: &Intrinsic, args: &[Operand<'tcx>], ret_ty: &SpirvType) -> PResult<'e, Id> {
         use self::Intrinsic::*;
         let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<PResult<Vec<_>>>()?;
         let component_ids = args_ops.iter().filter_map(
@@ -50,7 +50,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                 }).collect::<Vec<_>>();
 
         match *intrinsic {
-            VectorNew(ref components) => self.emit_vector_new(components, args_ops, component_ids),
+            VectorNew(ref components) => self.emit_vector_new(components, args_ops, component_ids, ret_ty),
             Swizzle { components_out, components_in } => self.emit_swizzle(
                                                                     components_in,
                                                                     components_out,
@@ -98,7 +98,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
             
             self.block.emit_instruction(
                 OpVectorShuffle(
-                    self.ctxt.builder.define_type(&ty),
+                    self.ctxt.builder.define_type(ty),
                     result_id,
                     component_ids[0],
                     component_ids[1],
@@ -140,11 +140,11 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
         }
     }
 
-    fn emit_vector_new(&mut self, num_components: &[u32], args: Vec<SpirvOperand>, component_ids: Vec<Id>) -> PResult<'e, Id> {
+    fn emit_vector_new(&mut self, num_components: &[u32], args: Vec<SpirvOperand>, component_ids: Vec<Id>, ret_ty: &SpirvType) -> PResult<'e, Id> {
         assert!(num_components.len() == component_ids.len());
         let out_components = num_components.iter().fold(0, |acc, &x| acc + x);
-        let base_ty = Type::Float(32); // TODO: high:
-        let ty = Type::Vector{ base: Box::new(base_ty.clone()), components: out_components };
+        let base_ty = if let Type::Vector { ref base, .. } = *ret_ty.ty() { base } else { return Err(self.ctxt.tcx.sess.struct_err("inspirv: expected vector type")); };
+        let ty = Type::Vector{ base: base_ty.clone(), components: out_components };
         if args.iter().all(|arg| arg.is_constant()) && num_components.iter().all(|num| *num == 1) {
             // all args are scalar constants!
             let constant = module::Constant::Composite(ty, component_ids);

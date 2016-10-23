@@ -3,6 +3,7 @@ use rustc_mir as mir;
 use rustc::mir::transform::MirSource;
 use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
+use rustc::middle::cstore;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::{ConstInt, ConstFloat};
 use rustc::ty::{self, TyCtxt, Ty};
@@ -199,7 +200,7 @@ pub enum SpirvType {
 }
 
 impl SpirvType {
-    fn is_ref(&self) -> bool {
+    pub fn is_ref(&self) -> bool {
         if let SpirvType::Ref {..} = *self {
             true
         } else {
@@ -207,7 +208,7 @@ impl SpirvType {
         }
     }
 
-    fn ty(&self) -> &Type {
+    pub fn ty(&self) -> &Type {
         use self::SpirvType::*;
         match *self {
             NoRef(ref ty)
@@ -305,7 +306,7 @@ pub struct InspirvModuleCtxt<'v, 'tcx: 'v> {
 }
 
 pub struct InspirvFnCtxt<'v, 'tcx: 'v> {
-    tcx: &'v TyCtxt<'v, 'tcx, 'tcx>,
+    pub tcx: &'v TyCtxt<'v, 'tcx, 'tcx>,
     mir_map: &'v MirMap<'tcx>,
     mir: &'v Mir<'tcx>,
     def_id: DefId,
@@ -508,7 +509,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
                                     let id = self.builder.define_variable(name.as_str(), ty.clone(),
                                                                  StorageClass::StorageClassInput);
-                                    let field_attrs = attribute::parse(self.tcx.sess, &self.tcx.get_attrs(field.did))?;
+                                    let field_attrs = self.get_struct_field_attributes(struct_ty_id, field.did)?;
                                     for attr in field_attrs {
                                         match attr {
                                             Attribute::Location { location } => {
@@ -625,7 +626,6 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             //  These functions don't have actual input/output parameters
             //  We use them for the shader interface and uniforms
             let return_ptr = &self.mir.local_decls[Local::new(0)];
-            let mut err = None;
             let func = if let Some(&Attribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
                 match self.mir.return_ty.sty {
                     ty::TyAdt(adt, subs) => {
@@ -636,8 +636,8 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                 let id = self.builder.define_variable(name.as_str(), ty.clone(),
                                                              StorageClass::StorageClassOutput);
 
-
-                                let field_attrs = attribute::parse(self.tcx.sess, &self.tcx.get_attrs(field.did))?;
+                                let field_attrs = self.get_struct_field_attributes(ty_id, field.did)?;
+                                println!("{:?}", self.tcx.map.as_local_node_id(field.did));
                                 let mut attribute_loc = None;
                                 for attr in field_attrs {
                                     match attr {
@@ -654,7 +654,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                                 if let Some(location) = attribute_loc {
                                     self.builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
                                 } else {
-                                    err = Some(self.tcx.sess.struct_err("Output argument type field requires a location attribute"));
+                                    return Err(self.tcx.sess.struct_err("Output argument type field requires a location attribute"));
                                 }
 
                                 interface_ids.push(id);
@@ -667,6 +667,11 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     }
                     ty::TyTuple(tys) if tys.is_empty() => self.return_ids = None, // MIR doesn't use void(!) instead the () type for some reason \o/
                     _ => { err = Some(self.tcx.sess.struct_err("Output argument type requires to be a struct type or empty")); }
+                }
+
+                if let Some(mut err) = err {
+                    if let Some(source) = return_ptr.source_info { err.set_span(source.span); }
+                    return Err(err)
                 }
 
                 //
@@ -683,6 +688,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     .unwrap();
 
                 func.ret_ty = Type::Void;
+
                 func
             } else {
                 // Standard function
@@ -919,14 +925,38 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
         }
     }
 
-    fn get_node_attributes(&self, id: DefId) -> PResult<'e, Vec<Attribute>> {
-        let node_id = self.tcx.map.as_local_node_id(id);
-        if let Some(node_id) = node_id {
-             attribute::parse(self.tcx.sess, self.tcx.map.attrs(node_id))
+    fn get_struct_field_attributes(&self, struct_id: DefId, field_id: DefId) -> PResult<'e, Vec<Attribute>> {
+        let (item, field_id) = if let Some(struct_id) = self.tcx.map.as_local_node_id(struct_id) {
+            let item = self.tcx.map.get(struct_id);
+            let field_id = self.tcx.map.as_local_node_id(field_id).unwrap();
+            if let hir::map::Node::NodeItem(item) = item {
+                (item, field_id)
+            } else {
+                bug!("Struct node should be a NodeItem {:?}", item)
+            }
         } else {
-            let attr = self.tcx.sess.cstore.item_attrs(id);
-            attribute::parse(self.tcx.sess, &attr)
+            let item = self.tcx.sess.cstore.maybe_get_item_ast(*self.tcx, struct_id).unwrap().0;
+            let field_id = self.tcx.sess.cstore.local_node_for_inlined_defid(field_id).unwrap();
+            if let cstore::InlinedItem::Item(_, ref item) = *item {
+                (item.deref(), field_id)
+            } else {
+                bug!("Struct node should be a inlined item {:?}", item)
+            }
+        };
+
+        if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
+            let field = variant_data.fields().iter()
+                                    .find(|field| field.id == field_id)
+                                    .expect("Unable to find struct field by id");
+            attribute::parse(self.tcx.sess, &field.attrs)
+        } else {
+            bug!("Struct item node should be a struct {:?}", item.node)
         }
+    }
+
+    fn get_node_attributes(&self, id: DefId) -> PResult<'e, Vec<Attribute>> {
+        let attrs = self.tcx.get_attrs(id);
+        attribute::parse(self.tcx.sess, &attrs)
     }
 
     fn rust_ty_to_spirv(&self, t: Ty<'tcx>) -> PResult<'e, Type> {
@@ -1116,7 +1146,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         self.block.emit_instruction(OpCompositeConstruct(self.ctxt.builder.define_type(&lvalue_ty.into()), composite_id, ids));
                                         self.block.emit_instruction(OpStore(lvalue_id, composite_id, None));
                                     }
-                                    SpirvOperand::FnCall(mut def_id, substs) => {
+                                    SpirvOperand::FnCall(def_id, substs) => {
                                         // Constants (?)
                                         let ty = self.ctxt.tcx.lookup_item_type(def_id).ty;
                                         let ty = monomorphize::apply_ty_substs(self.ctxt.tcx, substs, ty);
@@ -1134,7 +1164,8 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                                         // Translate function call
                                         let id = if let Some(&Attribute::Intrinsic(ref intrinsic)) = intrinsic {
-                                            self.emit_intrinsic(intrinsic, &[])?
+                                            let ret_ty = self.ctxt.rust_ty_to_spirv_ref(ty)?;
+                                            self.emit_intrinsic(intrinsic, &[], &ret_ty)?
                                         } else {
                                             // 'normal' function call
                                             if !self.ctxt.fn_ids.contains_key(&(def_id, signature.clone())) {
@@ -1501,7 +1532,8 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                         // Translate function call
                         let id = if let Some(&Attribute::Intrinsic(ref intrinsic)) = intrinsic {
-                            self.emit_intrinsic(intrinsic, args)?
+                            let ret_ty = self.ctxt.rust_ty_to_spirv_ref(signature.output)?;
+                            self.emit_intrinsic(intrinsic, args, &ret_ty)?
                         } else {
                             // 'normal' function call
                             let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<PResult<Vec<_>>>()?;
