@@ -968,7 +968,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     }
 
     // TODO: low: We could cache some aggregated types for faster compilation
-    fn rust_ty_to_spirv_ref(&self, t: Ty<'tcx>) -> PResult<'e, SpirvType> {
+    pub fn rust_ty_to_spirv_ref(&self, t: Ty<'tcx>) -> PResult<'e, SpirvType> {
         use self::SpirvType::*;
         match t.sty {
             ty::TyBool => Ok(NoRef(Type::Bool)),
@@ -1107,7 +1107,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
     fn trans_stmnt(&mut self, stmt: &Statement<'tcx>) -> PResult<'e, ()>{
         match stmt.kind {
             StatementKind::Assign(ref assign_lvalue, ref rvalue) => {
-                println!("{:?}", (assign_lvalue, rvalue));
+                println!("assign {:?}", (assign_lvalue, rvalue));
                 let lvalue = self.ctxt.resolve_lvalue(assign_lvalue)?;
                 let lvalue = self.ctxt.transform_lvalue(self.block, lvalue);
             
@@ -1164,8 +1164,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                                         // Translate function call
                                         let id = if let Some(&Attribute::Intrinsic(ref intrinsic)) = intrinsic {
-                                            let ret_ty = self.ctxt.rust_ty_to_spirv_ref(ty)?;
-                                            self.emit_intrinsic(intrinsic, &[], &ret_ty)?
+                                            self.emit_intrinsic(intrinsic, &[], ty)?
                                         } else {
                                             // 'normal' function call
                                             if !self.ctxt.fn_ids.contains_key(&(def_id, signature.clone())) {
@@ -1532,8 +1531,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                         // Translate function call
                         let id = if let Some(&Attribute::Intrinsic(ref intrinsic)) = intrinsic {
-                            let ret_ty = self.ctxt.rust_ty_to_spirv_ref(signature.output)?;
-                            self.emit_intrinsic(intrinsic, args, &ret_ty)?
+                            self.emit_intrinsic(intrinsic, args, signature.output)?
                         } else {
                             // 'normal' function call
                             let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<PResult<Vec<_>>>()?;

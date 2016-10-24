@@ -2,6 +2,7 @@
 use rustc::mir::repr::*;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::ConstInt;
+use rustc::ty::{self, TyCtxt, Ty};
 use syntax::parse::PResult;
 use trans::{InspirvBlock, SpirvOperand, SpirvLvalue, SpirvType};
 use inspirv::types::*;
@@ -33,7 +34,7 @@ pub enum Intrinsic {
 }
 
 impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
-    pub fn emit_intrinsic(&mut self, intrinsic: &Intrinsic, args: &[Operand<'tcx>], ret_ty: &SpirvType) -> PResult<'e, Id> {
+    pub fn emit_intrinsic(&mut self, intrinsic: &Intrinsic, args: &[Operand<'tcx>], ret_ty: Ty<'tcx>) -> PResult<'e, Id> {
         use self::Intrinsic::*;
         let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<PResult<Vec<_>>>()?;
         let component_ids = args_ops.iter().filter_map(
@@ -50,7 +51,10 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v ,'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                 }).collect::<Vec<_>>();
 
         match *intrinsic {
-            VectorNew(ref components) => self.emit_vector_new(components, args_ops, component_ids, ret_ty),
+            VectorNew(ref components) => {
+                let ret_ty = self.ctxt.rust_ty_to_spirv_ref(ret_ty)?;
+                self.emit_vector_new(components, args_ops, component_ids, &ret_ty)
+            }
             Swizzle { components_out, components_in } => self.emit_swizzle(
                                                                     components_in,
                                                                     components_out,

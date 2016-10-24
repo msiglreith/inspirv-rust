@@ -1,11 +1,9 @@
-#![crate_type = "lib"]
-#![feature(fundamental, no_core, lang_items, custom_attribute, attr_literals, optin_builtin_traits)]
-#![allow(dead_code)]
+#![feature(custom_attribute, attr_literals)]
 #![allow(unused_attributes)]
-#![no_core]
+#![no_std]
 
-mod std_spirv;
-use std_spirv::*;
+extern crate std;
+use std::*;
 
 struct QuadVertex {
     #[inspirv(location = 0)] pos: Float4,
@@ -32,15 +30,15 @@ struct Locals {
 }
 
 #[inspirv(entry_point = "vertex")]
-fn vertex(input: Attributes<QuadVertex>) -> QuadVarying {
+fn vertex(vertex: Attributes<QuadVertex>) -> QuadVarying {
     QuadVarying {
-        pos: input.pos,
-        color: input.color,
+        pos: vertex.pos,
+        color: vertex.color,
     }
 }
 
 #[inspirv(entry_point = "fragment")]
-fn fragment(input: Attributes<QuadVarying>, fragment: Attributes<QuadFragment>, local: Cbuffer<Locals>) -> QuadOut {
+fn fragment(varying: Attributes<QuadVarying>, fragment: Attributes<QuadFragment>, local: Cbuffer<Locals>) -> QuadOut {
     let w = local.dimensions.x;
     let h = local.dimensions.x;
     QuadOut {
