@@ -4,11 +4,18 @@
 
 #![feature(custom_attribute)]
 #![feature(attr_literals)]
+#![feature(prelude_import)]
 
 #![allow(unused_attributes)]
 
 #![no_std]
 extern crate core as __core;
+
+#[prelude_import]
+#[allow(unused)]
+use prelude::v1::*;
+
+pub mod prelude;
 
 pub use core::clone;
 pub use core::cmp;
