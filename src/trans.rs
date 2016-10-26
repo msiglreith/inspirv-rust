@@ -165,6 +165,8 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
             }
             
             config::CrateTypeStaticlib => {
+                // Static libraries are compiled to spv modules
+                // These are easier to handle than using the executable type
                 if let Some(ref mut module) = translation {
                     let filename = format!("{}.spv", name);
                     let ofile = Path::new(&filename);
@@ -173,6 +175,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
                     module.export_binary(file);
 
+                    // DEBUG: print the exported module
                     let file = File::open(ofile).unwrap();
                     let mut reader = inspirv::read_binary::ReaderBinary::new(file).unwrap();
 

@@ -8,6 +8,36 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Overloadable operators.
+//!
+//! Implementing these traits allows you to overload certain operators.
+//!
+//! Some of these traits are imported by the prelude, so they are available in
+//! every Rust program. Only operators backed by traits can be overloaded. For
+//! example, the addition operator (`+`) can be overloaded through the [`Add`]
+//! trait, but since the assignment operator (`=`) has no backing trait, there
+//! is no way of overloading its semantics. Additionally, this module does not
+//! provide any mechanism to create new operators. If traitless overloading or
+//! custom operators are required, you should look toward macros or compiler
+//! plugins to extend Rust's syntax.
+//!
+//! Note that the `&&` and `||` operators short-circuit, i.e. they only
+//! evaluate their second operand if it contributes to the result. Since this
+//! behavior is not enforceable by traits, `&&` and `||` are not supported as
+//! overloadable operators.
+//!
+//! Many of the operators take their operands by value. In non-generic
+//! contexts involving built-in types, this is usually not a problem.
+//! However, using these operators in generic code, requires some
+//! attention if values have to be reused as opposed to letting the operators
+//! consume them. One option is to occasionally use [`clone()`].
+//! Another option is to rely on the types involved providing additional
+//! operator implementations for references. For example, for a user-defined
+//! type `T` which is supposed to support addition, it is probably a good
+//! idea to have both `T` and `&T` implement the traits [`Add<T>`][`Add`] and
+//! [`Add<&T>`][`Add`] so that generic code can be written without unnecessary
+//! cloning.
+
 /// The `Add` trait is used to specify the functionality of `+`.
 ///
 /// # Examples
@@ -811,7 +841,7 @@ macro_rules! sub_assign_impl {
     )+)
 }
 
-sub_assign_impl! { usize u8 u16 u32 u64 isize i8 i16 i32 i64 f32 f64 }
+sub_assign_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 /// The `MulAssign` trait is used to specify the functionality of `*=`.
 ///
@@ -842,11 +872,17 @@ pub trait MulAssign<Rhs=Self> {
     fn mul_assign(&mut self, Rhs);
 }
 
-impl MulAssign for isize {
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn mul_assign(&mut self, other: isize) { *self *= other }
+macro_rules! mul_assign_impl {
+    ($($t:ty)+) => ($(
+        impl MulAssign for $t {
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn mul_assign(&mut self, other: $t) { *self *= other }
+        }
+    )+)
 }
+
+mul_assign_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 /// The `DivAssign` trait is used to specify the functionality of `/=`.
 ///
@@ -877,11 +913,17 @@ pub trait DivAssign<Rhs=Self> {
     fn div_assign(&mut self, Rhs);
 }
 
-impl DivAssign for isize {
-    #[inline]
-    #[inspirv(compiler_builtin)]
-    fn div_assign(&mut self, other: isize) { *self /= other }
+macro_rules! div_assign_impl {
+    ($($t:ty)+) => ($(
+        impl DivAssign for $t {
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn div_assign(&mut self, other: $t) { *self /= other }
+        }
+    )+)
 }
+
+div_assign_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 /// The `RemAssign` trait is used to specify the functionality of `%=`.
 ///
@@ -912,6 +954,18 @@ pub trait RemAssign<Rhs=Self> {
     /// The method for the `%=` operator    
     fn rem_assign(&mut self, Rhs);
 }
+
+macro_rules! rem_assign_impl {
+    ($($t:ty)+) => ($(
+        impl RemAssign for $t {
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn rem_assign(&mut self, other: $t) { *self %= other }
+        }
+    )+)
+}
+
+rem_assign_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
 
 /// The `BitAndAssign` trait is used to specify the functionality of `&=`.
 ///
@@ -952,9 +1006,21 @@ pub trait RemAssign<Rhs=Self> {
 /// ```
 #[lang = "bitand_assign"]
 pub trait BitAndAssign<Rhs=Self> {
-    /// The method for the `&` operator    
+    /// The method for the `&=` operator    
     fn bitand_assign(&mut self, Rhs);
 }
+
+macro_rules! bitand_assign_impl {
+    ($($t:ty)+) => ($(
+        impl BitAndAssign for $t {
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn bitand_assign(&mut self, other: $t) { *self &= other }
+        }
+    )+)
+}
+
+bitand_assign_impl! { bool usize u16 u32 u64 isize i16 i32 i64 }
 
 /// The `BitOrAssign` trait is used to specify the functionality of `|=`.
 ///
@@ -986,6 +1052,18 @@ pub trait BitOrAssign<Rhs=Self> {
     fn bitor_assign(&mut self, Rhs);
 }
 
+macro_rules! bitor_assign_impl {
+    ($($t:ty)+) => ($(
+        impl BitOrAssign for $t {
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn bitor_assign(&mut self, other: $t) { *self |= other }
+        }
+    )+)
+}
+
+bitor_assign_impl! { bool usize u16 u32 u64 isize i16 i32 i64 }
+
 /// The `BitXorAssign` trait is used to specify the functionality of `^=`.
 ///
 /// # Examples
@@ -1015,6 +1093,18 @@ pub trait BitXorAssign<Rhs=Self> {
     /// The method for the `^=` operator    
     fn bitxor_assign(&mut self, Rhs);
 }
+
+macro_rules! bitxor_assign_impl {
+    ($($t:ty)+) => ($(
+        impl BitXorAssign for $t {
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn bitxor_assign(&mut self, other: $t) { *self ^= other }
+        }
+    )+)
+}
+
+bitxor_assign_impl! { bool usize u16 u32 u64 isize i16 i32 i64 }
 
 /// The `ShlAssign` trait is used to specify the functionality of `<<=`.
 ///
@@ -1046,6 +1136,34 @@ pub trait ShlAssign<Rhs> {
     fn shl_assign(&mut self, Rhs);
 }
 
+macro_rules! shl_assign_impl {
+    ($t:ty, $f:ty) => (
+        impl ShlAssign<$f> for $t {
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn shl_assign(&mut self, other: $f) {
+                *self <<= other
+            }
+        }
+    )
+}
+
+macro_rules! shl_assign_impl_all {
+    ($($t:ty)*) => ($(
+        shl_assign_impl! { $t, u16 }
+        shl_assign_impl! { $t, u32 }
+        shl_assign_impl! { $t, u64 }
+        shl_assign_impl! { $t, usize }
+
+        shl_assign_impl! { $t, i16 }
+        shl_assign_impl! { $t, i32 }
+        shl_assign_impl! { $t, i64 }
+        shl_assign_impl! { $t, isize }
+    )*)
+}
+
+shl_assign_impl_all! { u16 u32 u64 usize i16 i32 i64 isize }
+
 /// The `ShrAssign` trait is used to specify the functionality of `>>=`.
 ///
 /// # Examples
@@ -1075,6 +1193,34 @@ pub trait ShrAssign<Rhs=Self> {
     /// The method for the `>>=` operator    
     fn shr_assign(&mut self, Rhs);
 }
+
+macro_rules! shr_assign_impl {
+    ($t:ty, $f:ty) => (
+        impl ShrAssign<$f> for $t {
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn shr_assign(&mut self, other: $f) {
+                *self >>= other
+            }
+        }
+    )
+}
+
+macro_rules! shr_assign_impl_all {
+    ($($t:ty)*) => ($(
+        shr_assign_impl! { $t, u16 }
+        shr_assign_impl! { $t, u32 }
+        shr_assign_impl! { $t, u64 }
+        shr_assign_impl! { $t, usize }
+
+        shr_assign_impl! { $t, i16 }
+        shr_assign_impl! { $t, i32 }
+        shr_assign_impl! { $t, i64 }
+        shr_assign_impl! { $t, isize }
+    )*)
+}
+
+shr_assign_impl_all! { u16 u32 u64 usize i16 i32 i64 isize }
 
 /// The `Deref` trait is used to specify the functionality of dereferencing
 /// operations, like `*v`.

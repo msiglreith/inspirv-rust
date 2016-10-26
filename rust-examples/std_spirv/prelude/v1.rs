@@ -17,7 +17,7 @@
 // Reexported types and traits
 #[doc(no_inline)] pub use clone::Clone;
 #[doc(no_inline)] pub use cmp::{PartialEq, PartialOrd, Eq, Ord};
-// #[doc(no_inline)] pub use default::Default;
+#[doc(no_inline)] pub use default::Default;
 // #[doc(no_inline)] pub use iter::{Iterator, IntoIterator};
 #[doc(no_inline)] pub use option::Option::{self, Some, None};
 #[doc(no_inline)] pub use interface::{Attributes, Cbuffer};
