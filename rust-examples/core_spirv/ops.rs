@@ -504,6 +504,26 @@ pub trait Neg {
     fn neg(self) -> Self::Output;
 }
 
+macro_rules! neg_impl_core {
+    ($id:ident => $body:expr, $($t:ty)*) => ($(
+        impl Neg for $t {
+            type Output = $t;
+
+            #[inline]
+            #[inspirv(compiler_builtin)]
+            fn neg(self) -> $t { let $id = self; $body }
+        }
+
+        forward_ref_unop! { impl Neg, neg for $t }
+    )*)
+}
+
+macro_rules! neg_impl_numeric {
+    ($($t:ty)*) => { neg_impl_core!{ x => -x, $($t)*} }
+}
+
+neg_impl_numeric! { isize i16 i32 i64 f32 f64 }
+
 /// The `Not` trait is used to specify the functionality of unary `!`.
 ///
 /// # Examples

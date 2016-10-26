@@ -1699,98 +1699,103 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
         use self::SpirvType::*;
 
         // emit instructions
-        let add_result = self.ctxt.builder.alloc_id();
+        let result = self.ctxt.builder.alloc_id();
         let op_binop: instruction::Instruction = match (op, &left_ty, &right_ty) {
             // arithmetic operators
             (BinOp::Add, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpIAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpIAdd(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Add, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFAdd(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFAdd(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Sub, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpISub(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpISub(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Sub, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFSub(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFSub(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Mul, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpIMul(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpIMul(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Mul, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFMul(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFMul(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Div, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpSDiv(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Div, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpUDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpUDiv(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Div, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFDiv(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFDiv(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             // logical operators
             (BinOp::Eq, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpIEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpIEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Ne, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
-                OpINotEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpINotEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Lt, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpULessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpULessThan(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Le, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpULessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpULessThanEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Gt, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpUGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpUGreaterThan(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Ge, &NoRef(Type::Int(_, false)), &NoRef(Type::Int(_, false))) => {
-                OpUGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpUGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Lt, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSLessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpSLessThan(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Le, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSLessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpSLessThanEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Gt, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpSGreaterThan(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Ge, &NoRef(Type::Int(_, true)), &NoRef(Type::Int(_, true))) => {
-                OpSGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpSGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             // TODO: ordered or unordered?
             (BinOp::Eq, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFOrdEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Ne, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdNotEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFOrdNotEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             (BinOp::Lt, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdLessThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFOrdLessThan(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Le, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdLessThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFOrdLessThanEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Gt, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdGreaterThan(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFOrdGreaterThan(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
             (BinOp::Ge, &NoRef(Type::Float(..)), &NoRef(Type::Float(..))) => {
-                OpFOrdGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), add_result, left_id, right_id).into()
+                OpFOrdGreaterThanEqual(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
+            }
+
+            // other binary operators
+            (BinOp::Shl, &NoRef(Type::Int(..)), &NoRef(Type::Int(..))) => {
+                OpShiftLeftLogical(self.ctxt.builder.define_type(&result_ty), result, left_id, right_id).into()
             }
 
             _ => bug!("Unexpected binop combination ({:?})", (op, left_ty, right_ty)),
@@ -1799,7 +1804,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
         self.block.emit_instruction(op_binop);
         
         // store
-        self.block.emit_instruction(OpStore(result_id, add_result, None));
+        self.block.emit_instruction(OpStore(result_id, result, None));
         Ok(())
     }
 }

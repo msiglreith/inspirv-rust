@@ -19,6 +19,8 @@ pub mod prelude;
 
 pub use core::clone;
 pub use core::cmp;
+pub use core::default;
+pub use core::iter;
 pub use core::marker;
 pub use core::ops;
 pub use core::option;
