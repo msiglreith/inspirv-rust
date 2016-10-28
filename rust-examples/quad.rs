@@ -1,9 +1,5 @@
 #![feature(custom_attribute, attr_literals)]
 #![allow(unused_attributes)]
-#![no_std]
-
-extern crate std;
-use std::*;
 
 struct QuadVertex {
     #[inspirv(location = 0)] pos: Float4,

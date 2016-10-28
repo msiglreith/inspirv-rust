@@ -513,8 +513,6 @@ macro_rules! neg_impl_core {
             #[inspirv(compiler_builtin)]
             fn neg(self) -> $t { let $id = self; $body }
         }
-
-        forward_ref_unop! { impl Neg, neg for $t }
     )*)
 }
 
