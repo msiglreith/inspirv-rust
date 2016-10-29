@@ -36,7 +36,7 @@ use monomorphize;
 use traits;
 use error::PResult;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::env;
 use std::io::Write;
 
@@ -45,7 +45,8 @@ const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|pa
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                                     mut mir_map: &mut MirMap<'tcx>,
-                                    analysis: &ty::CrateAnalysis) {
+                                    analysis: &ty::CrateAnalysis,
+                                    out_dir: &Option<&'a Path>) {
     let time_passes = tcx.sess.time_passes();
 
     // Run the passes that transform the MIR into a more suitable for translation
@@ -72,12 +73,13 @@ pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
     time(time_passes,
          "translation",
-         move || trans_crate(tcx, mir_map, analysis))
+         move || trans_crate(tcx, mir_map, analysis, out_dir))
 }
 
 fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                          mir_map: &MirMap<'tcx>,
-                         analysis: &ty::CrateAnalysis) {
+                         analysis: &ty::CrateAnalysis,
+                         out_dir: &Option<&'a Path>) {
     let _task = tcx.dep_graph.in_task(DepNode::TransCrate);
 
     let ty::CrateAnalysis { ref export_map, ref reachable, name, .. } = *analysis;
@@ -120,6 +122,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
             config::CrateTypeRlib => {
                 let filename = format!("lib{}.rlib", name);
                 let ofile = Path::new(&filename);
+                let out_path = if let Some(ref out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
                 println!("{:?}", ofile);
                 let cmd_path = {
                     let mut new_path = tcx.sess.host_filesearch(PathKind::All)
@@ -132,7 +135,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
                 let archive_config = archive::ArchiveConfig {
                     sess: tcx.sess,
-                    dst: ofile.to_path_buf(),
+                    dst: out_path.to_path_buf(),
                     src: None,
                     lib_search_paths: Vec::new(),
                     ar_prog: link::get_ar_prog(tcx.sess),
@@ -170,13 +173,14 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                 if let Some(ref mut module) = translation {
                     let filename = format!("{}.spv", name);
                     let ofile = Path::new(&filename);
+                    let out_path = if let Some(ref out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
                     println!("{:?}", ofile);
-                    let file = File::create(ofile).unwrap();
+                    let file = File::create(&out_path).unwrap();
 
                     module.export_binary(file);
 
                     // DEBUG: print the exported module
-                    let file = File::open(ofile).unwrap();
+                    let file = File::open(&out_path).unwrap();
                     let mut reader = inspirv::read_binary::ReaderBinary::new(file).unwrap();
 
                     while let Some(instr) = reader.read_instruction().unwrap() {
