@@ -2,7 +2,7 @@
 use rustc::mir::repr::*;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::ConstInt;
-use rustc::ty::{self, TyCtxt, Ty};
+use rustc::ty::Ty;
 use syntax::parse::PResult;
 use trans::{InspirvBlock, SpirvOperand, SpirvLvalue, SpirvType};
 use inspirv::types::*;

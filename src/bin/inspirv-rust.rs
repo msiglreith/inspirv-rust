@@ -26,16 +26,9 @@ use rustc::lint;
 use std::process;
 use std::path::PathBuf;
 
-use std::cmp::max;
-use std::cmp::Ordering::Equal;
 use std::default::Default;
-use std::env;
-use std::io::{self, Read, Write};
-use std::iter::repeat;
 use std::rc::Rc;
 use std::str;
-use std::sync::{Arc, Mutex};
-use std::thread;
 
 use syntax::ast;
 use syntax::feature_gate::{GatedCfg, UnstableFeatures};

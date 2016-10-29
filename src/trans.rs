@@ -36,7 +36,7 @@ use monomorphize;
 use traits;
 use error::PResult;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::env;
 use std::io::Write;
 
@@ -122,7 +122,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
             config::CrateTypeRlib => {
                 let filename = format!("lib{}.rlib", name);
                 let ofile = Path::new(&filename);
-                let out_path = if let Some(ref out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
+                let out_path = if let Some(out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
                 println!("{:?}", ofile);
                 let cmd_path = {
                     let mut new_path = tcx.sess.host_filesearch(PathKind::All)
@@ -173,7 +173,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                 if let Some(ref mut module) = translation {
                     let filename = format!("{}.spv", name);
                     let ofile = Path::new(&filename);
-                    let out_path = if let Some(ref out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
+                    let out_path = if let Some(out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
                     println!("{:?}", ofile);
                     let file = File::create(&out_path).unwrap();
 
