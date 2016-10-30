@@ -7,4 +7,4 @@ name = "std"
 path = "lib.rs"
 
 [dependencies]
-core = { path = "../core_spirv" }
+core = { path = "../libstd" }
