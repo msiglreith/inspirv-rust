@@ -39,6 +39,7 @@ use std::fs::File;
 use std::path::Path;
 use std::env;
 use std::io::Write;
+use std::boxed;
 
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
@@ -1056,18 +1057,13 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                         )))
                 }    
             }
-            ty::TyAdt(adt, _subs) if adt.is_enum() => {
+            ty::TyAdt(adt, subs) if adt.is_enum() => {
                 use rustc_const_math::ConstInt::*;
                 use rustc_const_math::ConstIsize::*;
 
                 if adt.variants.is_empty() {
                     // TODO: probably won't happen?
                     return Ok(NoRef(Type::Void))
-                }
-
-                let unit_only = adt.variants.iter().all(|variant| variant.ctor_kind == CtorKind::Const);
-                if !unit_only {
-                    bug!("inspirv: Enums can only contain unit type structs ({:?})", t.sty);
                 }
 
                 let disr = adt.variants[0].disr_val;
@@ -1082,7 +1078,30 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     _ => bug!("inspirv: Unsupported enum base type ({:?})", disr),
                 };
 
-                Ok(NoRef(Type::Int(bit_width, signed)))
+                let tag_type = Type::Int(bit_width, signed);
+
+                let unit_only = adt.variants.iter().all(|variant| variant.ctor_kind == CtorKind::Const);
+                if unit_only {
+                    Ok(NoRef(tag_type)) 
+                } else {
+                    println!("Enum data: {:?}", adt);
+
+                    let mut sub_structs = Vec::new();
+                    for variant in &adt.variants {
+                        sub_structs.push(Type::Struct(
+                            variant.fields.iter().map(|field|
+                                self.rust_ty_to_spirv(
+                                    field.ty(*self.tcx, subs)
+                                )).collect::<PResult<Vec<_>>>()?
+                        ));
+                    }
+
+                    // tag field
+                    sub_structs.push(tag_type);
+
+                    Ok(NoRef(Type::Struct(sub_structs)))
+                }
+               
             }
 
             ty::TyRef(_, ty_mut) => {
@@ -1359,13 +1378,15 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                 // TODO
                             }
 
-                            Aggregate(ref kind, ref _operands) => {
+                            Aggregate(ref kind, ref operands) => {
                                 match *kind {
-                                    // Only care about c-enums, we can't handle the other things
-                                    AggregateKind::Adt(adt, index, _, _) if adt.is_enum() => {
+                                    // enums
+                                    AggregateKind::Adt(adt, index, _a, _b) if adt.is_enum() => {
                                         use rustc_const_math::ConstInt::*;
                                         use rustc_const_math::ConstIsize::*;
+                                        use inspirv::core::enumeration::StorageClass::*;
 
+                                        let unit_only = adt.variants.iter().all(|variant| variant.ctor_kind == CtorKind::Const);
                                         let disr = adt.variants[index].disr_val;
                                         println!("{:?}", disr);
 
@@ -1381,7 +1402,24 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         };
 
                                         let constant_id = self.ctxt.builder.define_constant(constant);
-                                        self.block.emit_instruction(OpStore(lvalue_id, constant_id, None));
+
+                                        if unit_only {
+                                            self.block.emit_instruction(OpStore(lvalue_id, constant_id, None));
+                                        } else {
+                                            let fields = if let &Type::Struct(ref fields) = lvalue_ty.ty() { fields } else { bug!("inspirv: expected struct type for enum translation") };
+                                            let tag_chain_id = self.ctxt.builder.alloc_id();
+                                            let tag_ty_id = self.ctxt.builder.define_type(&Type::Pointer(boxed::Box::new(fields.last().unwrap().clone()), StorageClassFunction));
+                                            let tag_field_id = self.ctxt.builder.define_constant(module::Constant::Scalar(ConstValue::U32(fields.len() as u32 - 1)));
+                                            self.block.emit_instruction(OpAccessChain(tag_ty_id, tag_chain_id, lvalue_id, vec![tag_field_id]));
+
+                                            let tag_load_id = self.ctxt.builder.alloc_id();
+                                            self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&fields.last().unwrap()), tag_load_id, tag_chain_id, None));
+                                            self.block.emit_instruction(OpStore(tag_load_id, constant_id, None));
+
+                                            // TODO: store actual value...
+                                            println!("Enum assign: {:?}", (adt, index, _a, _b));
+                                            println!("Operands {:?}", operands);
+                                        }   
                                     }
                                     // TODO: structs
                                     _ => self.ctxt.tcx.sess.span_err(stmt.source_info.span, "inspirv: Unhandled aggregate type"),
