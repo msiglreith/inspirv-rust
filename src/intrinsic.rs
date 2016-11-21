@@ -1,5 +1,5 @@
 
-use rustc::mir::repr::*;
+use rustc::mir::*;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::ConstInt;
 use rustc::ty::Ty;

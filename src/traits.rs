@@ -16,9 +16,9 @@ pub fn resolve_trait_method<'a, 'tcx>(
     def_id: DefId,
     substs: &'tcx Substs<'tcx>
 ) -> (DefId, &'tcx Substs<'tcx>) {
-    let method_item = tcx.impl_or_trait_item(def_id);
-    let trait_id = method_item.container().id();
-    let trait_ref = ty::Binder(ty::TraitRef::from_method(*tcx, trait_id, substs));
+    let trait_ref = tcx.impl_trait_ref(def_id).unwrap();
+    let trait_id = trait_ref.def_id;
+    let trait_ref = ty::Binder(trait_ref);
     match fulfill_obligation(tcx, trait_ref) {
         traits::VtableImpl(vtable_impl) => {
             let impl_did = vtable_impl.impl_def_id;
@@ -32,7 +32,7 @@ pub fn resolve_trait_method<'a, 'tcx>(
         }
 
         traits::VtableClosure(vtable_closure) =>
-            (vtable_closure.closure_def_id, vtable_closure.substs.func_substs),
+            (vtable_closure.closure_def_id, vtable_closure.substs.substs),
 
         traits::VtableFnPointer(_fn_ty) => {
             let _trait_closure_kind = tcx.lang_items.fn_trait_kind(trait_id).unwrap();
@@ -109,7 +109,7 @@ fn fulfill_obligation<'a, 'tcx>(
 
 #[derive(Debug)]
 struct ImplMethod<'tcx> {
-    method: Rc<ty::Method<'tcx>>,
+    method: ty::AssociatedItem,
     substs: &'tcx Substs<'tcx>,
     is_provided: bool,
 }
@@ -126,7 +126,7 @@ fn get_impl_method<'a, 'tcx>(
     let trait_def_id = tcx.trait_id_of_impl(impl_def_id).unwrap();
     let trait_def = tcx.lookup_trait_def(trait_def_id);
 
-    match trait_def.ancestors(impl_def_id).fn_defs(tcx, name).next() {
+    match trait_def.ancestors(impl_def_id).defs(tcx, name, ty::AssociatedKind::Method).next() {
         Some(node_item) => {
             let substs = tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
                 let substs = traits::translate_substs(&infcx, impl_def_id,

@@ -19,7 +19,6 @@ use rustc::dep_graph::DepGraph;
 use rustc::session::{Session, build_session, early_error};
 use rustc::session::config::{self, ErrorOutputType, Input, PrintRequest};
 use rustc_driver::{driver, target_features, CompilerCalls, Compilation, RustcDefaultCalls};
-use rustc::mir::mir_map::MirMap;
 use rustc_metadata::cstore::CStore;
 use rustc::lint;
 
@@ -39,7 +38,6 @@ struct SpirvCompilerCalls;
 // copied from RustcDefaultCalls::print_crate_info
 // TODO: remove if this ever goes public
 fn print_crate_info(sess: &Session,
-                    cfg: &ast::CrateConfig,
                     input: Option<&Input>,
                     odir: &Option<PathBuf>,
                     ofile: &Option<PathBuf>)
@@ -95,8 +93,8 @@ fn print_crate_info(sess: &Session,
                 let allow_unstable_cfg = UnstableFeatures::from_environment()
                     .is_nightly_build();
 
-                for cfg in cfg {
-                    if !allow_unstable_cfg && GatedCfg::gate(&*cfg).is_some() {
+                for cfg in &sess.parse_sess.config {
+                    if !allow_unstable_cfg && GatedCfg::gate(cfg).is_some() {
                         continue;
                     }
 
@@ -116,16 +114,12 @@ fn print_crate_info(sess: &Session,
                 }
             }
             PrintRequest::TargetCPUs => {
-
             }
             PrintRequest::TargetFeatures => {
-
             }
             PrintRequest::RelocationModels => {
-
             }
             PrintRequest::CodeModels => {
-
             }
         }
     }
@@ -135,12 +129,11 @@ fn print_crate_info(sess: &Session,
 fn parse_crate_attrs<'a>(sess: &'a Session, input: &Input) -> PResult<'a, Vec<ast::Attribute>> {
     match *input {
         Input::File(ref ifile) => {
-            parse::parse_crate_attrs_from_file(ifile, Vec::new(), &sess.parse_sess)
+            parse::parse_crate_attrs_from_file(ifile, &sess.parse_sess)
         }
         Input::Str { ref name, ref input } => {
             parse::parse_crate_attrs_from_source_str(name.clone(),
                                                      input.clone(),
-                                                     Vec::new(),
                                                      &sess.parse_sess)
         }
     }
@@ -158,23 +151,17 @@ impl<'a> CompilerCalls<'a> for SpirvCompilerCalls {
             state.session.abort_if_errors();
 
             let tcx = state.tcx.unwrap();
-            let mir_map = state.mir_map.unwrap();
             {
                 println!("Pre-trans");
                 tcx.print_debug_stats();
             }
 
-            let mut mir_map_copy = MirMap::new(tcx.dep_graph.clone());
-            for def_id in mir_map.map.keys() {
-                mir_map_copy.map.insert(def_id, mir_map.map.get(&def_id).unwrap().clone());
-            }
+            trans::translate_to_spirv(&tcx, state.analysis.unwrap(), &state.out_dir);
 
             {
                 println!("Post-trans");
                 tcx.print_debug_stats();
             }
-
-            trans::translate_to_spirv(&tcx, &mut mir_map_copy, state.analysis.unwrap(), &state.out_dir);
         });
 
         control
@@ -206,11 +193,7 @@ impl<'a> CompilerCalls<'a> for SpirvCompilerCalls {
                 rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
                 let mut cfg = config::build_configuration(&sess, cfg.clone());
                 target_features::add_configuration(&mut cfg, &sess);
-                let should_stop = print_crate_info(&sess,
-                                                                      &cfg,
-                                                                      None,
-                                                                      odir,
-                                                                      ofile);
+                let should_stop = print_crate_info(&sess, None, odir, ofile);
                 if should_stop == Compilation::Stop {
                     return None;
                 }
@@ -226,12 +209,11 @@ impl<'a> CompilerCalls<'a> for SpirvCompilerCalls {
     fn late_callback(&mut self,
                      matches: &getopts::Matches,
                      sess: &Session,
-                     cfg: &ast::CrateConfig,
                      input: &Input,
                      odir: &Option<PathBuf>,
                      ofile: &Option<PathBuf>)
                      -> Compilation {
-        print_crate_info(sess, cfg, Some(input), odir, ofile)
+        print_crate_info(sess, Some(input), odir, ofile)
             .and_then(|| RustcDefaultCalls::list_metadata(sess, matches, input))
     }
 }

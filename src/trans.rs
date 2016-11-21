@@ -1,8 +1,7 @@
 
 use rustc_mir as mir;
 use rustc::mir::transform::MirSource;
-use rustc::mir::repr::*;
-use rustc::mir::mir_map::MirMap;
+use rustc::mir::*;
 use rustc::middle::cstore;
 use rustc::middle::const_val::ConstVal::*;
 use rustc_const_math::{ConstInt, ConstFloat};
@@ -45,7 +44,6 @@ use std::boxed;
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
-                                    mut mir_map: &mut MirMap<'tcx>,
                                     analysis: &ty::CrateAnalysis,
                                     out_dir: &Option<&'a Path>) {
     let time_passes = tcx.sess.time_passes();
@@ -54,31 +52,23 @@ pub fn translate_to_spirv<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     time(time_passes, "Prepare MIR codegen passes", || {
         let mut passes = ::rustc::mir::transform::Passes::new();
         passes.push_hook(box mir::transform::dump_mir::DumpMir);
-        passes.push_pass(box mir::transform::no_landing_pads::NoLandingPads);
-        passes.push_pass(box mir::transform::simplify_cfg::SimplifyCfg::new("no-landing-pads"));
+        passes.push_pass(box mir::transform::simplify::SimplifyCfg::new("initial"));
+        passes.push_pass(
+            box mir::transform::qualify_consts::QualifyAndPromoteConstants::default());
+        passes.push_pass(box mir::transform::type_check::TypeckMir);
+        passes.push_pass(
+            box mir::transform::simplify_branches::SimplifyBranches::new("initial"));
+        passes.push_pass(box mir::transform::simplify::SimplifyCfg::new("qualify-consts"));
 
-        passes.push_pass(box mir::transform::erase_regions::EraseRegions);
-
-        passes.push_pass(box mir::transform::add_call_guards::AddCallGuards);
-        passes.push_pass(box borrowck::ElaborateDrops);
-        passes.push_pass(box mir::transform::no_landing_pads::NoLandingPads);
-        passes.push_pass(box mir::transform::simplify_cfg::SimplifyCfg::new("elaborate-drops"));
-
-        passes.push_pass(box mir::transform::deaggregator::Deaggregator);
-
-        passes.push_pass(box mir::transform::add_call_guards::AddCallGuards);
-        passes.push_pass(box mir::transform::dump_mir::Marker("PreTrans"));
-
-        passes.run_passes(*tcx, &mut mir_map);
+        passes.run_passes(*tcx);
     });
 
     time(time_passes,
          "translation",
-         move || trans_crate(tcx, mir_map, analysis, out_dir))
+         move || trans_crate(tcx, analysis, out_dir))
 }
 
 fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
-                         mir_map: &MirMap<'tcx>,
                          analysis: &ty::CrateAnalysis,
                          out_dir: &Option<&'a Path>) {
     let _task = tcx.dep_graph.in_task(DepNode::TransCrate);
@@ -102,7 +92,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                               export_map,
                               &link_meta,
                               reachable,
-                              mir_map)
+                              )
     });
 
     let mut builder = ModuleBuilder::new();
@@ -110,7 +100,6 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
     let mut v = InspirvModuleCtxt {
         tcx: tcx,
-        mir_map: mir_map,
         builder: builder,
 
         fn_ids: HashMap::new(),
@@ -306,7 +295,6 @@ pub enum FuncReturn {
 
 pub struct InspirvModuleCtxt<'v, 'tcx: 'v> {
     tcx: &'v TyCtxt<'v, 'tcx, 'tcx>,
-    mir_map: &'v MirMap<'tcx>,
     builder: ModuleBuilder,
 
     // Save id's of all functions
@@ -315,7 +303,6 @@ pub struct InspirvModuleCtxt<'v, 'tcx: 'v> {
 
 pub struct InspirvFnCtxt<'v, 'tcx: 'v> {
     pub tcx: &'v TyCtxt<'v, 'tcx, 'tcx>,
-    mir_map: &'v MirMap<'tcx>,
     mir: &'v Mir<'tcx>,
     def_id: DefId,
     pub builder: &'v mut ModuleBuilder,
@@ -336,15 +323,18 @@ enum FnTrans {
 
 impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
     fn trans(&mut self) -> Option<RawModule> {
-        let def_ids = self.mir_map.map.keys();
+        let def_ids = self.tcx.mir_map.borrow().keys();
         for def_id in def_ids {
-            let mir = self.mir_map.map.get(&def_id).unwrap();
+            if !def_id.is_local() {
+                continue;
+            }
+            let mir = &mut self.tcx.mir_map.borrow()[&def_id].borrow_mut();
+            self.tcx.dep_graph.write(DepNode::Mir(def_id));
             let id = self.tcx.map.as_local_node_id(def_id).unwrap();
             let src = MirSource::from_node(*self.tcx, id);
 
             let mut fn_ctxt = InspirvFnCtxt {
                 tcx: self.tcx,
-                mir_map: self.mir_map,
                 mir: mir,
                 def_id: def_id,
                 builder: &mut self.builder,
@@ -361,7 +351,6 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
                 MirSource::Fn(_) => fn_ctxt.trans_fn(FnTrans::OnlyPublic),
                 MirSource::Static(_, mutability) => fn_ctxt.trans_static(mutability),
                 MirSource::Promoted(_, promoted) => {
-                    println!("{:?}", (id, promoted, mir));
                     Ok(())
                 }
             };
@@ -431,15 +420,16 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
     fn trans_fn(&'e mut self, translation_mode: FnTrans) -> PResult<'e, ()> {
         let did = self.def_id;
-        let type_scheme = self.tcx.lookup_item_type(did);
+        let type_scheme = self.tcx.item_type(did);
+        let generics = self.tcx.item_generics(did);
 
         // Don't translate generic functions!
-        if self.substs.is_none() && (!type_scheme.generics.types.is_empty() || type_scheme.generics.parent_types > 0) {
+        if self.substs.is_none() && (!generics.types.is_empty() || generics.parent_types > 0) {
             return Ok(());
         }
         
         let signature = {
-            let sig = type_scheme.ty.fn_sig().skip_binder();
+            let sig = type_scheme.fn_sig().skip_binder();
             if let Some(substs) = self.substs {
                 monomorphize::apply_param_substs(self.tcx, substs, sig)
             } else {
@@ -808,7 +798,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
     // TODO: remove ugly clones if possible
     fn resolve_lvalue(&mut self, lvalue: &Lvalue<'tcx>) -> PResult<'e, SpirvLvalue> {
-        use rustc::mir::repr::Lvalue::*;
+        use rustc::mir::Lvalue::*;
         use inspirv::core::enumeration::StorageClass::*;
         use self::SpirvType::*;
         match *lvalue {
@@ -882,7 +872,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
     // Retrieve reference to the type of the lvalue
     // Needed for assignment of references to keep pass the referent
     fn resolve_ref_lvalue<'a>(&'a mut self, lvalue: &'a Lvalue<'tcx>) -> Option<&'a mut SpirvType> {
-        use rustc::mir::repr::Lvalue::*;
+        use rustc::mir::Lvalue::*;
         match *lvalue {
             Local(id) => {
                 let idx = id.index();
@@ -1139,7 +1129,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
             
                 match lvalue {
                     SpirvLvalue::Variable(lvalue_id, lvalue_ty, _) | SpirvLvalue::Return((lvalue_id, lvalue_ty)) => {
-                        use rustc::mir::repr::Rvalue::*;
+                        use rustc::mir::Rvalue::*;
                         match *rvalue {
                             Use(ref operand) => {
                                 let op = self.trans_operand(operand)?;
@@ -1174,7 +1164,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                     }
                                     SpirvOperand::FnCall(def_id, substs) => {
                                         // Constants (?)
-                                        let ty = self.ctxt.tcx.lookup_item_type(def_id).ty;
+                                        let ty = self.ctxt.tcx.item_type(def_id);
                                         let ty = monomorphize::apply_ty_substs(self.ctxt.tcx, substs, ty);
                                         let signature = ty::FnSig {
                                             inputs: Vec::new(),
@@ -1194,50 +1184,26 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         } else {
                                             // 'normal' function call
                                             if !self.ctxt.fn_ids.contains_key(&(def_id, signature.clone())) {
-                                                if let Some(mir) = self.ctxt.mir_map.map.get(&def_id) {
-                                                    // local crate function
-                                                    let mut fn_ctxt = InspirvFnCtxt {
-                                                        tcx: self.ctxt.tcx,
-                                                        mir_map: self.ctxt.mir_map,
-                                                        mir: mir,
-                                                        def_id: def_id,
-                                                        builder: self.ctxt.builder,
-                                                        fn_ids: self.ctxt.fn_ids,
-                                                        substs: Some(substs),
+                                                // function in external crate
+                                                let mir = self.ctxt.tcx.sess.cstore.get_item_mir(*self.ctxt.tcx, def_id);
+                                                let mut fn_ctxt = InspirvFnCtxt {
+                                                    tcx: self.ctxt.tcx,
+                                                    mir: &mir,
+                                                    def_id: def_id,
+                                                    builder: self.ctxt.builder,
+                                                    fn_ids: self.ctxt.fn_ids,
+                                                    substs: Some(substs),
 
-                                                        arg_ids: IndexVec::new(),
-                                                        local_ids: IndexVec::new(),
-                                                        return_ids: None,
-                                                    };
-
-                                                    let result = fn_ctxt.trans_const();
-                                                    if let Err(mut err) = result {
-                                                        err.emit();
-                                                        return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
-                                                    }
-                                                } else {
-                                                    // function in external crate
-                                                    let mir_external = self.ctxt.tcx.sess.cstore.maybe_get_item_mir(*self.ctxt.tcx, def_id).unwrap();
-                                                    let mut fn_ctxt = InspirvFnCtxt {
-                                                        tcx: self.ctxt.tcx,
-                                                        mir_map: self.ctxt.mir_map,
-                                                        mir: &mir_external,
-                                                        def_id: def_id,
-                                                        builder: self.ctxt.builder,
-                                                        fn_ids: self.ctxt.fn_ids,
-                                                        substs: Some(substs),
-
-                                                        arg_ids: IndexVec::new(),
-                                                        local_ids: IndexVec::new(),
-                                                        return_ids: None,
-                                                    };
-
-                                                    let result = fn_ctxt.trans_const();
-                                                    if let Err(mut err) = result {
-                                                        err.emit();
-                                                        return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
-                                                    }
+                                                    arg_ids: IndexVec::new(),
+                                                    local_ids: IndexVec::new(),
+                                                    return_ids: None,
                                                 };
+
+                                                let result = fn_ctxt.trans_const();
+                                                if let Err(mut err) = result {
+                                                    err.emit();
+                                                    return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
+                                                }
                                             }
 
                                             let fn_id = self.ctxt.fn_ids[&(def_id, signature)];
@@ -1436,7 +1402,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                     }
 
                     SpirvLvalue::SignatureStruct(ref interfaces, _) => {
-                        use rustc::mir::repr::Rvalue::*;
+                        use rustc::mir::Rvalue::*;
                         match *rvalue {
                             Use(ref _operand) => {
                                 // TODO:
@@ -1482,7 +1448,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
     }
 
     fn trans_terminator(&'e mut self, ret_ty: &Type, terminator: &Terminator<'tcx>) -> PResult<'e, ()> {
-        use rustc::mir::repr::TerminatorKind::*;
+        use rustc::mir::TerminatorKind::*;
         match terminator.kind {
             Return => {
                 match (ret_ty, &self.ctxt.return_ids) {
@@ -1549,12 +1515,12 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 let func_op = self.trans_operand(func)?;
                 match func_op {
                     SpirvOperand::FnCall(mut def_id, substs) => {
-                        let fn_ty = self.ctxt.tcx.lookup_item_type(def_id).ty;
+                        let fn_ty = self.ctxt.tcx.item_type(def_id);
                         let signature = fn_ty.fn_sig().skip_binder();
 
                         let (substs, signature) = if self.ctxt.tcx.trait_of_item(def_id).is_some() {
                             let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.ctxt.tcx, def_id, substs);
-                            let ty = self.ctxt.tcx.lookup_item_type(resolved_def_id).ty;
+                            let ty = self.ctxt.tcx.item_type(resolved_def_id);
                             // TODO: investigate rustc trans use of liberate_bound_regions or similar here
                             let signature = ty.fn_sig().skip_binder();
 
@@ -1591,50 +1557,26 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                             let signature = monomorphize::apply_param_substs(self.ctxt.tcx, substs, signature);
 
                             if !self.ctxt.fn_ids.contains_key(&(def_id, signature.clone())) {
-                                if let Some(mir) = self.ctxt.mir_map.map.get(&def_id) {
-                                    // local crate function
-                                    let mut fn_ctxt = InspirvFnCtxt {
-                                        tcx: self.ctxt.tcx,
-                                        mir_map: self.ctxt.mir_map,
-                                        mir: mir,
-                                        def_id: def_id,
-                                        builder: self.ctxt.builder,
-                                        fn_ids: self.ctxt.fn_ids,
-                                        substs: Some(substs),
+                                // function in external crate
+                                let mir = self.ctxt.tcx.sess.cstore.get_item_mir(*self.ctxt.tcx, def_id);
+                                let mut fn_ctxt = InspirvFnCtxt {
+                                    tcx: self.ctxt.tcx,
+                                    mir: &mir,
+                                    def_id: def_id,
+                                    builder: self.ctxt.builder,
+                                    fn_ids: self.ctxt.fn_ids,
+                                    substs: Some(substs),
 
-                                        arg_ids: IndexVec::new(),
-                                        local_ids: IndexVec::new(),
-                                        return_ids: None,
-                                    };
-
-                                    let result = fn_ctxt.trans_fn(FnTrans::Required);
-                                    if let Err(mut err) = result {
-                                        err.emit();
-                                        return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
-                                    }
-                                } else {
-                                    // function in external crate
-                                    let mir_external = self.ctxt.tcx.sess.cstore.maybe_get_item_mir(*self.ctxt.tcx, def_id).unwrap();
-                                    let mut fn_ctxt = InspirvFnCtxt {
-                                        tcx: self.ctxt.tcx,
-                                        mir_map: self.ctxt.mir_map,
-                                        mir: &mir_external,
-                                        def_id: def_id,
-                                        builder: self.ctxt.builder,
-                                        fn_ids: self.ctxt.fn_ids,
-                                        substs: Some(substs),
-
-                                        arg_ids: IndexVec::new(),
-                                        local_ids: IndexVec::new(),
-                                        return_ids: None,
-                                    };
-
-                                    let result = fn_ctxt.trans_fn(FnTrans::Required);
-                                    if let Err(mut err) = result {
-                                        err.emit();
-                                        return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
-                                    }
+                                    arg_ids: IndexVec::new(),
+                                    local_ids: IndexVec::new(),
+                                    return_ids: None,
                                 };
+
+                                let result = fn_ctxt.trans_fn(FnTrans::Required);
+                                if let Err(mut err) = result {
+                                    err.emit();
+                                    return Err(self.ctxt.tcx.sess.struct_err("Stop due to error on translating function"));
+                                }
                             }
 
                             let fn_id = self.ctxt.fn_ids[&(def_id, signature)];
@@ -1686,7 +1628,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
     }
 
     pub fn trans_operand(&mut self, operand: &Operand<'tcx>) -> PResult<'e, SpirvOperand<'tcx>> {
-        use rustc::mir::repr::Operand::*;
+        use rustc::mir::Operand::*;
         match *operand {
             Consume(ref lvalue) => {
                 let lvalue = self.ctxt.resolve_lvalue(lvalue)?;

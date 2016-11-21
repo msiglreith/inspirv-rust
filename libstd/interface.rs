@@ -26,3 +26,16 @@ impl<T> Deref for Cbuffer<T> {
         &self.0
     }
 }
+
+#[inspirv(constants)]
+pub struct Constants<T>(T);
+
+impl<T> Deref for Constants<T> {
+    type Target = T;
+
+    #[inline]
+    #[inspirv(intrinsic(deref))]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
