@@ -17,7 +17,12 @@ macro_rules! matrix2x2_ops_impl {
             type Output = Matrix2x2<$t>;
 
             #[inspirv(intrinsic(add))]
-            fn add(self, _rhs: Matrix2x2<$t>) -> Self::Output { loop {} }
+            fn add(self, rhs: Matrix2x2<$t>) -> Self::Output {
+                Matrix2x2 {
+                    col0: self.col0 + rhs.col0,
+                    col1: self.col1 + rhs.col1,
+                }
+            }
         }
 
         impl AddAssign for Matrix2x2<$t> {
@@ -31,7 +36,12 @@ macro_rules! matrix2x2_ops_impl {
             type Output = Matrix2x2<$t>;
 
             #[inspirv(intrinsic(add))]
-            fn sub(self, _rhs: Matrix2x2<$t>) -> Self::Output { loop {} }
+            fn sub(self, rhs: Matrix2x2<$t>) -> Self::Output {
+                Matrix2x2 {
+                    col0: self.col0 - rhs.col0,
+                    col1: self.col1 - rhs.col1,
+                }
+            }
         }
 
         impl SubAssign for Matrix2x2<$t> {

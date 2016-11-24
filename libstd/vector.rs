@@ -18,13 +18,67 @@ macro_rules! vector2_impl {
             pub fn new(x: $t, y: $t) -> Vector2<$t> { Vector2 { x: x, y: y } }
 
             #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 2)))]
-            pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+            pub fn swizzle2(self, idx_x: u32, idx_y: u32) -> Vector2<$t> {
+                let x = match idx_x {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index x out of range {:?}", idx_x),
+                };
+                let y = match idx_y {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index y out of range {:?}", idx_y),
+                };
+
+                Vector2 { x: x, y: y }
+            }
 
             #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 3)))]
-            pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+            pub fn swizzle3(self, idx_x: u32, idx_y: u32, idx_z: u32) -> Vector3<$t> {
+                let x = match idx_x {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index x out of range {:?}", idx_x),
+                };
+                let y = match idx_y {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index y out of range {:?}", idx_y),
+                };
+                let z = match idx_z {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index z out of range {:?}", idx_z),
+                };
+
+                Vector3 { x: x, y: y, z: z }
+            }
 
             #[inspirv(intrinsic(swizzle(num_in = 2, num_out = 4)))]
-            pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+            pub fn swizzle4(self, idx_x: u32, idx_y: u32, idx_z: u32, idx_w: u32) -> Vector4<$t> {
+                let x = match idx_x {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index x out of range {:?}", idx_x),
+                };
+                let y = match idx_y {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index y out of range {:?}", idx_y),
+                };
+                let z = match idx_z {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index z out of range {:?}", idx_z),
+                };
+                let w = match idx_w {
+                    0 => self.x,
+                    1 => self.y,
+                    _ => panic!("Swizzle index w out of range {:?}", idx_w),
+                };
+
+                Vector4 { x: x, y: y, z: z, w: w }
+            }
 
             #[inspirv(intrinsic(shuffle(num_in0 = 2, num_in1 = 2, num_out = 2)))]
             pub fn shuffle2x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
@@ -148,13 +202,76 @@ macro_rules! vector3_impl {
             }
 
             #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 2)))]
-            pub fn swizzle2(self, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
+            pub fn swizzle2(self, idx_x: u32, idx_y: u32) -> Vector2<$t> {
+                let x = match idx_x {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index x out of range {:?}", idx_x),
+                };
+                let y = match idx_y {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index y out of range {:?}", idx_y),
+                };
+
+                Vector2 { x: x, y: y }
+            }
 
             #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 3)))]
-            pub fn swizzle3(self, _idx_x: u32, _idx_y: u32, _idx_z: u32) -> Vector3<$t> { loop {} }
+            pub fn swizzle3(self, idx_x: u32, idx_y: u32, idx_z: u32) -> Vector3<$t> {
+                let x = match idx_x {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index x out of range {:?}", idx_x),
+                };
+                let y = match idx_y {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index y out of range {:?}", idx_y),
+                };
+                let z = match idx_z {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index z out of range {:?}", idx_z),
+                };
+
+                Vector3 { x: x, y: y, z: z }
+            }
 
             #[inspirv(intrinsic(swizzle(num_in = 3, num_out = 4)))]
-            pub fn swizzle4(self, _idx_x: u32, _idx_y: u32, _idx_z: u32, _idx_w: u32) -> Vector4<$t> { loop {} }
+            pub fn swizzle4(self, idx_x: u32, idx_y: u32, idx_z: u32, idx_w: u32) -> Vector4<$t> {
+                let x = match idx_x {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index x out of range {:?}", idx_x),
+                };
+                let y = match idx_y {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index y out of range {:?}", idx_y),
+                };
+                let z = match idx_z {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index z out of range {:?}", idx_z),
+                };
+                let w = match idx_w {
+                    0 => self.x,
+                    1 => self.y,
+                    2 => self.z,
+                    _ => panic!("Swizzle index w out of range {:?}", idx_w),
+                };
+
+                Vector4 { x: x, y: y, z: z, w: w }
+            }
 
             #[inspirv(intrinsic(shuffle(num_in0 = 3, num_in1 = 2, num_out = 2)))]
             pub fn shuffle2x2(self, _v2: Vector2<$t>, _idx_x: u32, _idx_y: u32) -> Vector2<$t> { loop {} }
