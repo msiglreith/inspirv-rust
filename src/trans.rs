@@ -860,7 +860,13 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     (&ProjectionElem::Deref, &SpirvLvalue::Variable(id, Ref {ref ty, referent: None, ..}, storage_class)) => {
                         Ok(SpirvLvalue::Variable(id, SpirvType::NoRef(ty.clone()), storage_class))
                     }
+                    (&ProjectionElem::Downcast(_, field), &SpirvLvalue::Variable(id, SpirvType::NoRef(Type::Struct(ref fields)), storage_class)) => {
+                        // Extract corresponding sub-struct from the enum
+                        let field_id = self.builder.define_constant(module::Constant::Scalar(ConstValue::U32(field as u32)));
+                        Ok(SpirvLvalue::AccessChain(id, storage_class, vec![field_id], fields[field].clone()))
+                    }
                     _ => {
+                        println!("{:?}", proj);
                         let err = self.tcx.sess.struct_err("inspirv: Unsupported lvalue projection!");
                         Err(err)
                     }
@@ -1065,6 +1071,8 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                     U16(_) => (16, false),
                     U32(_) => (32, false),
                     U64(_) => (64, false),
+                    Infer(_) => (64, false),
+                    InferSigned(_) => (64, true),
                     _ => bug!("inspirv: Unsupported enum base type ({:?})", disr),
                 };
 
@@ -1363,7 +1371,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                             I64(v) => module::Constant::Scalar(ConstValue::I64(v)),
                                             U16(v) => module::Constant::Scalar(ConstValue::U16(v)),
                                             U32(v) => module::Constant::Scalar(ConstValue::U32(v)),
-                                            U64(v) => module::Constant::Scalar(ConstValue::U64(v)),
+                                            U64(v) | Infer(v) => module::Constant::Scalar(ConstValue::U64(v)),
                                             _ => bug!("inspirv: Unsupported enum base type ({:?})", disr),
                                         };
 
@@ -1372,15 +1380,19 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         if unit_only {
                                             self.block.emit_instruction(OpStore(lvalue_id, constant_id, None));
                                         } else {
-                                            let fields = if let &Type::Struct(ref fields) = lvalue_ty.ty() { fields } else { bug!("inspirv: expected struct type for enum translation") };
+                                            let fields = if let Type::Struct(ref fields) = *lvalue_ty.ty() { fields } else { bug!("inspirv: expected struct type for enum translation") };
+                                            
+                                            // update tag field
                                             let tag_chain_id = self.ctxt.builder.alloc_id();
                                             let tag_ty_id = self.ctxt.builder.define_type(&Type::Pointer(boxed::Box::new(fields.last().unwrap().clone()), StorageClassFunction));
                                             let tag_field_id = self.ctxt.builder.define_constant(module::Constant::Scalar(ConstValue::U32(fields.len() as u32 - 1)));
                                             self.block.emit_instruction(OpAccessChain(tag_ty_id, tag_chain_id, lvalue_id, vec![tag_field_id]));
 
                                             let tag_load_id = self.ctxt.builder.alloc_id();
-                                            self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(&fields.last().unwrap()), tag_load_id, tag_chain_id, None));
+                                            self.block.emit_instruction(OpLoad(self.ctxt.builder.define_type(fields.last().unwrap()), tag_load_id, tag_chain_id, None));
                                             self.block.emit_instruction(OpStore(tag_load_id, constant_id, None));
+
+                                            // store value
 
                                             // TODO: store actual value...
                                             println!("Enum assign: {:?}", (adt, index, _a, _b));
@@ -1504,6 +1516,9 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                 let discr = self.ctxt.resolve_lvalue(discr).map(|lvalue| self.ctxt.transform_lvalue(self.block, lvalue)).expect("Unhandled lvalue");
 
                 println!("{:?}", (discr, adt_def, targets));
+
+                // TODO:
+                self.block.branch_instr = Some(BranchInstruction::Unreachable(OpUnreachable));
             }
 
             // &SwitchInt { discr, switch_ty, values, targets } => { },
@@ -1649,17 +1664,17 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                             Integral(ConstInt::I8(..)) => bug!("Inspirv: `i8` are not supported for shaders `{:?}`", c.literal),
                             Integral(ConstInt::I16(v)) => (module::Constant::Scalar(ConstValue::I16(v)), Type::Int(16, true)),
                             Integral(ConstInt::I32(v)) => (module::Constant::Scalar(ConstValue::I32(v)), Type::Int(32, true)),
-                            Integral(ConstInt::I64(v)) => (module::Constant::Scalar(ConstValue::I64(v)), Type::Int(64, true)),
+                            Integral(ConstInt::I64(v))
+                            | Integral(ConstInt::InferSigned(v)) => (module::Constant::Scalar(ConstValue::I64(v)), Type::Int(64, true)),
                             Integral(ConstInt::Isize(_v)) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
                             Integral(ConstInt::U8(..)) => bug!("Inspirv: `u8` are not supported for shaders `{:?}`", c.literal),
                             Integral(ConstInt::U16(v)) => (module::Constant::Scalar(ConstValue::U16(v)), Type::Int(16, false)),
                             Integral(ConstInt::U32(v)) => (module::Constant::Scalar(ConstValue::U32(v)), Type::Int(32, false)),
-                            Integral(ConstInt::U64(v)) => (module::Constant::Scalar(ConstValue::U64(v)), Type::Int(64, false)),
-                            Integral(ConstInt::Usize(_v)) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
+                            Integral(ConstInt::U64(v))
+                            | Integral(ConstInt::Infer(v)) => (module::Constant::Scalar(ConstValue::U64(v)), Type::Int(64, false)),
+                            Integral(ConstInt::Usize(v)) => (module::Constant::Scalar(ConstValue::U32(v.as_u64(self.ctxt.tcx.sess.target.uint_type) as u32)), Type::Int(32, false)),
                             Bool(val) => (module::Constant::Scalar(ConstValue::Bool(val)), Type::Bool),
                             Char(_val) => bug!("Currently unsupported constant literal `{:?}`", c.literal),
-                            Integral(ConstInt::Infer(_))
-                            | Integral(ConstInt::InferSigned(_)) => bug!("MIR must not use `{:?}`", c.literal),
                             Str(_) => bug!("Currently unsupported constant literal `{:?}`", c.literal), // TODO: unsupported
                             ByteStr(ref _v) => bug!("Currently unsupported constant literal `{:?}`", c.literal), // TODO: unsupported?
                             Struct(_)
