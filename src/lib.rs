@@ -6,7 +6,7 @@
 )]
 
 #![feature(plugin)]
-#![plugin(clippy)]
+// #![plugin(clippy)]
 
 #[macro_use]
 extern crate rustc;

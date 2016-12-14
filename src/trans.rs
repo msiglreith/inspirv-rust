@@ -73,7 +73,7 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                          out_dir: &Option<&'a Path>) {
     let _task = tcx.dep_graph.in_task(DepNode::TransCrate);
 
-    let ty::CrateAnalysis { ref export_map, ref reachable, name, .. } = *analysis;
+    let ty::CrateAnalysis { ref export_map, ref reachable, ref name, .. } = *analysis;
     let incremental_hashes_map = rustc_incremental::compute_incremental_hashes_map(*tcx);
     let link_meta = link::build_link_meta(&incremental_hashes_map, name);
 
@@ -939,10 +939,12 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
                 bug!("Struct node should be a NodeItem {:?}", item)
             }
         } else {
-            let item = self.tcx.sess.cstore.maybe_get_item_ast(*self.tcx, struct_id).unwrap().0;
-            let field_id = self.tcx.sess.cstore.local_node_for_inlined_defid(field_id).unwrap();
-            if let cstore::InlinedItem::Item(_, ref item) = *item {
-                (item.deref(), field_id)
+            // TODO: cleanup and not sure if correct..
+            let item_id = self.tcx.sess.cstore.maybe_get_item_ast(*self.tcx, struct_id).unwrap().1;
+            let item = self.tcx.map.get(item_id);
+            let field_id = self.tcx.map.as_local_node_id(field_id).unwrap();
+            if let hir::map::Node::NodeItem(item) = item {
+                (item, field_id)
             } else {
                 bug!("Struct node should be a inlined item {:?}", item)
             }

@@ -3,7 +3,15 @@
 An experimental compiler from [Rust] to [SPIR-V], using the `rustc` compiler and [MIR].
 The code is based upon [miri] and [mir2wasm].
 
-> rustc 1.15.0-nightly (ac635aa95 2016-11-18)
+> rustc 1.15.0-nightly (daf8c1dfc 2016-12-05)
+
+## Build
+In order to build the standard and core library directly, you can run:
+
+```
+cargo run -- libcore\lib.rs --target=etc/spirv.json
+cargo run -- libstd\lib.rs --extern core=libcore.rlib -L . --target=etc/spirv.json
+```
 
 ## Resources
 

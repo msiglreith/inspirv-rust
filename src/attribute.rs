@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use rustc::session::Session;
 use syntax;
 use syntax::ast::{LitKind, LitIntType, MetaItemKind, NestedMetaItemKind};
+use syntax::symbol::InternedString;
 use inspirv::core::enumeration::*;
 use intrinsic::Intrinsic;
 use error::{PResult, DiagnosticBuilderExt};
@@ -42,8 +43,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
     for attr in ast_attribs {
         let items = {
             // ignore non-`#[inspirv(..)]` attributes
-            if let MetaItemKind::List(ref name, ref items) = attr.node.value.node {
-                if name == "inspirv" {
+            if let MetaItemKind::List(ref items) = attr.value.node {
+                if &*attr.value.name.as_str() == "inspirv" {
                     items
                 } else { continue; }
             } else { continue; }
@@ -53,8 +54,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
             match item.node {
                 NestedMetaItemKind::MetaItem(ref item) => {
                     match item.node {
-                        MetaItemKind::NameValue(ref name, ref value) => {
-                            match &**name {
+                        MetaItemKind::NameValue(ref value) => {
+                            match &*item.name.as_str() {
                                 "entry_point" => {
                                     let stage = execution_model_from_str(sess, &*extract_attr_str(value)).map_err(|err| err.set_span(value.span) )?;
                                     attrs.push(Attribute::EntryPoint {
@@ -77,24 +78,24 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                 _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown attribute item")),
                             }
                         },
-                        MetaItemKind::Word(ref name) => {
-                            match &**name {
+                        MetaItemKind::Word => {
+                            match &*item.name.as_str() {
                                 "compiler_builtin" => attrs.push(Attribute::CompilerBuiltin),
                                 "interface" => attrs.push(Attribute::Interface),
                                 "const_buffer" => attrs.push(Attribute::ConstBuffer),
                                 _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown attribute item")),
                             }
                         },
-                        MetaItemKind::List(ref name, ref items) => {
-                            match &**name {
+                        MetaItemKind::List(ref items) => {
+                            match &*item.name.as_str() {
                                 "vector" => {
                                     let mut components = None;
                                     for item in items {
                                         match item.node {
                                             NestedMetaItemKind::MetaItem(ref item) => {
                                                 match item.node {
-                                                    MetaItemKind::NameValue(ref name, ref value) => {
-                                                        match &**name {
+                                                    MetaItemKind::NameValue(ref value) => {
+                                                        match &*item.name.as_str() {
                                                             "components" => {
                                                                 components = match value.node {
                                                                     syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
@@ -127,8 +128,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                         match item.node {
                                             NestedMetaItemKind::MetaItem(ref item) => {
                                                 match item.node {
-                                                    MetaItemKind::NameValue(ref name, ref value) => {
-                                                        match &**name {
+                                                    MetaItemKind::NameValue(ref value) => {
+                                                        match &*item.name.as_str() {
                                                             "rows" => {
                                                                 rows = match value.node {
                                                                     syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b),
@@ -168,8 +169,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                         match item.node {
                                             NestedMetaItemKind::MetaItem(ref item) => {
                                                 match item.node {
-                                                    MetaItemKind::NameValue(ref name, ref value) => {
-                                                        match &**name {
+                                                    MetaItemKind::NameValue(ref value) => {
+                                                        match &*item.name.as_str() {
                                                             "set" => {
                                                                 set = match value.node {
                                                                     syntax::ast::LitKind::Int(b, _) => Some(b),
@@ -207,8 +208,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                     match items[0].node {
                                         NestedMetaItemKind::MetaItem(ref item) => {
                                             match item.node {
-                                                MetaItemKind::List(ref name, ref items) => {
-                                                    match &**name {
+                                                MetaItemKind::List(ref items) => {
+                                                    match &*item.name.as_str() {
                                                         "shuffle" => {
                                                             let mut num_components_in0 = None;
                                                             let mut num_components_in1 = None;
@@ -217,8 +218,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                                 match item.node {
                                                                     NestedMetaItemKind::MetaItem(ref item) => {
                                                                         match item.node {
-                                                                            MetaItemKind::NameValue(ref name, ref value) => {
-                                                                                match &**name {
+                                                                            MetaItemKind::NameValue(ref value) => {
+                                                                                match &*item.name.as_str() {
                                                                                     "num_in0" => {
                                                                                         num_components_in0 = match value.node {
                                                                                             syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
@@ -267,8 +268,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                                 match item.node {
                                                                     NestedMetaItemKind::MetaItem(ref item) => {
                                                                         match item.node {
-                                                                            MetaItemKind::NameValue(ref name, ref value) => {
-                                                                                match &**name {
+                                                                            MetaItemKind::NameValue(ref value) => {
+                                                                                match &*item.name.as_str() {
                                                                                     "num_in" => {
                                                                                         num_components_in = match value.node {
                                                                                             syntax::ast::LitKind::Int(b, _) if b >= 2 => Some(b as u32),
@@ -325,8 +326,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                                         _ => return Err(sess.struct_span_err(item.span, "Inspirv: Unknown intrinsic")),
                                                     } 
                                                 }
-                                                MetaItemKind::Word(ref name) => {
-                                                    let intrinsic = match &**name {
+                                                MetaItemKind::Word => {
+                                                    let intrinsic = match &*item.name.as_str() {
                                                         "add" => Intrinsic::Add,
                                                         "sub" => Intrinsic::Sub,
                                                         "mul" => Intrinsic::Mul,
@@ -415,9 +416,9 @@ fn builtin_from_str<'a>(sess: &'a Session, name: &str) -> PResult<'a, BuiltIn> {
     }
 }
 
-fn extract_attr_str(lit: &syntax::ast::Lit) -> syntax::parse::token::InternedString {
+fn extract_attr_str(lit: &syntax::ast::Lit) -> InternedString {
     match lit.node {
-        syntax::ast::LitKind::Str(ref s, _) => s.clone(),
+        syntax::ast::LitKind::Str(ref s, _) => s.as_str(),
         _ => panic!("attribute values need to be strings"),
     }
 }

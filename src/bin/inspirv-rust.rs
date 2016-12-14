@@ -12,6 +12,8 @@ extern crate rustc_lint;
 extern crate rustc_metadata;
 extern crate rustc_errors as errors;
 extern crate syntax;
+extern crate syntax_pos;
+extern crate serialize;
 
 use inspirv_rust::trans;
 use rustc_trans::back::link;
@@ -21,6 +23,7 @@ use rustc::session::config::{self, ErrorOutputType, Input, PrintRequest};
 use rustc_driver::{driver, target_features, CompilerCalls, Compilation, RustcDefaultCalls};
 use rustc_metadata::cstore::CStore;
 use rustc::lint;
+use serialize::json::ToJson;
 
 use std::process;
 use std::path::PathBuf;
@@ -32,6 +35,7 @@ use std::str;
 use syntax::ast;
 use syntax::feature_gate::{GatedCfg, UnstableFeatures};
 use syntax::parse::{self, PResult};
+use syntax_pos::DUMMY_SP;
 
 struct SpirvCompilerCalls;
 
@@ -67,6 +71,7 @@ fn print_crate_info(sess: &Session,
                 println!("{}", targets.join("\n"));
             },
             PrintRequest::Sysroot => println!("{}", sess.sysroot().display()),
+            PrintRequest::TargetSpec => println!("{}", sess.target.target.to_json().pretty()),
             PrintRequest::FileNames |
             PrintRequest::CrateName => {
                 let input = match input {
@@ -93,24 +98,27 @@ fn print_crate_info(sess: &Session,
                 let allow_unstable_cfg = UnstableFeatures::from_environment()
                     .is_nightly_build();
 
-                for cfg in &sess.parse_sess.config {
-                    if !allow_unstable_cfg && GatedCfg::gate(cfg).is_some() {
+                let mut cfgs = Vec::new();
+                for &(name, ref value) in sess.parse_sess.config.iter() {
+                    let gated_cfg = GatedCfg::gate(&ast::MetaItem {
+                        name: name,
+                        node: ast::MetaItemKind::Word,
+                        span: DUMMY_SP,
+                    });
+                    if !allow_unstable_cfg && gated_cfg.is_some() {
                         continue;
                     }
 
-                    if cfg.is_word() {
-                        println!("{}", cfg.name());
-                    } else if let Some(s) = cfg.value_str() {
-                        println!("{}=\"{}\"", cfg.name(), s);
-                    } else if cfg.is_meta_item_list() {
-                        // Right now there are not and should not be any
-                        // MetaItemKind::List items in the configuration returned by
-                        // `build_configuration`.
-                        panic!("Found an unexpected list in cfg attribute '{}'!", cfg.name())
+                    cfgs.push(if let &Some(ref value) = value {
+                        format!("{}=\"{}\"", name, value)
                     } else {
-                        // There also shouldn't be literals.
-                        panic!("Found an unexpected literal in cfg attribute '{}'!", cfg.name())
-                    }
+                        format!("{}", name)
+                    });
+                }
+
+                cfgs.sort();
+                for cfg in cfgs {
+                    println!("{}", cfg);
                 }
             }
             PrintRequest::TargetCPUs => {

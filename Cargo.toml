@@ -20,4 +20,7 @@ env_logger = "0.3.3"
 libc = "0.2"
 inspirv = { git = "https://github.com/msiglreith/inspirv.git" }
 inspirv-builder = { git = "https://github.com/msiglreith/inspirv-builder.git" }
-clippy = "*"
+# clippy = "*"
+
+[dev-dependencies]
+# compiletest_rs = "0.2.4"
