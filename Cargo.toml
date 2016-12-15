@@ -23,4 +23,4 @@ inspirv-builder = { git = "https://github.com/msiglreith/inspirv-builder.git" }
 # clippy = "*"
 
 [dev-dependencies]
-# compiletest_rs = "0.2.4"
+compiletest_rs = "0.2.4"
