@@ -13,6 +13,12 @@ cargo run -- libcore\lib.rs --target=etc/spirv.json
 cargo run -- libstd\lib.rs --extern core=libcore.rlib -L . --target=etc/spirv.json
 ```
 
+To build the quad example shader:
+
+```
+cargo run -- rust-examples\quad.rs --extern std=libstd.rlib --extern core=libcore.lib -L . --target=etc/spirv.json
+```
+
 ## Resources
 
 * [miri](https://github.com/solson/miri) the MIR interpreter. mir2wasm is derived

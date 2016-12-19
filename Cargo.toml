@@ -21,6 +21,7 @@ libc = "0.2"
 inspirv = { git = "https://github.com/msiglreith/inspirv.git" }
 inspirv-builder = { git = "https://github.com/msiglreith/inspirv-builder.git" }
 # clippy = "*"
+petgraph = "0.4.1"
 
 [dev-dependencies]
 compiletest_rs = "0.2.4"

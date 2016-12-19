@@ -30,6 +30,8 @@ extern crate env_logger;
 extern crate inspirv;
 extern crate inspirv_builder;
 
+extern crate petgraph;
+
 pub mod error;
 pub mod trans;
 mod attribute;

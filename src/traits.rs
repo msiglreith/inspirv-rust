@@ -16,7 +16,7 @@ pub fn resolve_trait_method<'a, 'tcx>(
     def_id: DefId,
     substs: &'tcx Substs<'tcx>
 ) -> (DefId, &'tcx Substs<'tcx>) {
-    let trait_ref = tcx.impl_trait_ref(def_id).unwrap();
+    let trait_ref = ty::TraitRef::new(def_id, substs);
     let trait_id = trait_ref.def_id;
     let trait_ref = ty::Binder(trait_ref);
     match fulfill_obligation(tcx, trait_ref) {
@@ -37,24 +37,10 @@ pub fn resolve_trait_method<'a, 'tcx>(
         traits::VtableFnPointer(_fn_ty) => {
             let _trait_closure_kind = tcx.lang_items.fn_trait_kind(trait_id).unwrap();
             unimplemented!()
-            // let llfn = trans_fn_pointer_shim(ccx, trait_closure_kind, fn_ty);
-
-            // let method_ty = def_ty(tcx, def_id, substs);
-            // let fn_ptr_ty = match method_ty.sty {
-            //     ty::TyFnDef(_, _, fty) => tcx.mk_ty(ty::TyFnPtr(fty)),
-            //     _ => unreachable!("expected fn item type, found {}",
-            //                       method_ty)
-            // };
-            // Callee::ptr(immediate_rvalue(llfn, fn_ptr_ty))
         }
 
         traits::VtableObject(ref _data) => {
             unimplemented!()
-            // Callee {
-            //     data: Virtual(traits::get_vtable_index_of_object_method(
-            //                   tcx, data, def_id)),
-            //                   ty: def_ty(tcx, def_id, substs)
-            // }
         }
         vtable => unreachable!("resolved vtable bad vtable {:?} in trans", vtable),
     }
@@ -64,8 +50,8 @@ fn fulfill_obligation<'a, 'tcx>(
     tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     trait_ref: ty::PolyTraitRef<'tcx>
 ) -> traits::Vtable<'tcx, ()> {
-    // Do the initial selection for the obligation. This yields the shallow result we are
-    // looking for -- that is, what specific impl.
+    let trait_ref = tcx.erase_regions(&trait_ref);
+
     tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
         let mut selcx = traits::SelectionContext::new(&infcx);
 
@@ -74,7 +60,6 @@ fn fulfill_obligation<'a, 'tcx>(
             trait_ref.to_poly_trait_predicate(),
         );
 
-        // NOTE: This is the error handling from trans adapted to miri's fullfill_obligation
         let selection = match selcx.select(&obligation) {
             Ok(Some(selection)) => selection,
             Ok(None) => {
@@ -97,8 +82,9 @@ fn fulfill_obligation<'a, 'tcx>(
             }
         };
 
-        // Currently, we use a fulfillment context to completely resolve all nested obligations.
-        // This is because they can inform the inference of the impl's type parameters.
+        // Currently, we use a fulfillment context to completely resolve
+        // all nested obligations. This is because they can inform the
+        // inference of the impl's type parameters.
         let mut fulfill_cx = traits::FulfillmentContext::new();
         let vtable = selection.map(|predicate| {
             fulfill_cx.register_predicate_obligation(&infcx, predicate);

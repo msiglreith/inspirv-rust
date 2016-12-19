@@ -39,6 +39,7 @@ use std::path::Path;
 use std::env;
 use std::io::Write;
 use std::boxed;
+use petgraph::dot::{Dot, Config};
 
 // const SOURCE_INSPIRV_RUST: u32 = 0xCC; // TODO: might get an official number in the future?
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
@@ -155,6 +156,18 @@ fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                 }
                 ab.add_file(&metadata_file);
                 ab.build();
+            }
+
+            config::CrateTypeMetadata => {
+                let filename = format!("lib{}.rmeta", name);
+                let ofile = Path::new(&filename);
+                let out_path = if let Some(out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
+                println!("{:?}", ofile);
+
+                let result = File::create(&out_path).and_then(|mut f| f.write_all(&metadata));
+                if let Err(e) = result {
+                    tcx.sess.fatal(&format!("failed to write {}: {}", out_path.display(), e));
+                }
             }
             
             config::CrateTypeStaticlib => {
@@ -364,6 +377,13 @@ impl<'v, 'tcx> InspirvModuleCtxt<'v, 'tcx> {
             }
         }
 
+        // debug: visualize functions
+        println!("---------- export DOT FILES ----------");
+        self.builder.iter_functions().map(|(_, func)| {
+            let cfg = inspirv_builder::cfg::build_graph(func);
+            println!("{:?}", Dot::with_config(&cfg, &[Config::EdgeNoLabel]));
+        });
+
         match self.builder.build() {
             Ok(module) => Some(module),
             Err(err) => {
@@ -408,12 +428,7 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
 
         println!("{:?}", self.mir);
 
-        let signature = ty::FnSig {
-            inputs: Vec::new(),
-            output: self.mir.return_ty,
-            variadic: false,
-        };
-
+        let signature = self.tcx.mk_fn_sig(Vec::new().iter().cloned(), self.mir.return_ty, false);
         self.fn_ids.insert((self.def_id, signature), const_fn.id);
         self.trans(const_fn)
     }
@@ -453,8 +468,6 @@ impl<'e, 'v: 'e, 'tcx> InspirvFnCtxt<'v, 'tcx> {
             }) {
                 return Ok(());
             }
-
-            
 
             // check if we have an entry point
             let entry_point = attrs.iter().find(|attr| match **attr {
@@ -1176,11 +1189,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
                                         // Constants (?)
                                         let ty = self.ctxt.tcx.item_type(def_id);
                                         let ty = monomorphize::apply_ty_substs(self.ctxt.tcx, substs, ty);
-                                        let signature = ty::FnSig {
-                                            inputs: Vec::new(),
-                                            output: ty,
-                                            variadic: false,
-                                        };
+                                        let signature = self.ctxt.tcx.mk_fn_sig(Vec::new().iter().cloned(), ty, false);
 
                                         let attrs = self.ctxt.get_node_attributes(def_id)?;
                                         let intrinsic = attrs.iter().find(|attr| match **attr {
@@ -1531,11 +1540,18 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
             Call { ref func, ref args, ref destination, .. } => {
                 let func_op = self.trans_operand(func)?;
                 match func_op {
-                    SpirvOperand::FnCall(mut def_id, substs) => {
+                    SpirvOperand::FnCall(mut def_id, subst) => {
                         let fn_ty = self.ctxt.tcx.item_type(def_id);
                         let signature = fn_ty.fn_sig().skip_binder();
 
+                        let substs = if let Some(fn_substs) = self.ctxt.substs {
+                            monomorphize::apply_param_substs(self.ctxt.tcx, fn_substs, &subst)
+                        } else {
+                            subst
+                        };
+
                         let (substs, signature) = if self.ctxt.tcx.trait_of_item(def_id).is_some() {
+                            println!("{:?}", (&fn_ty, &signature, &substs));
                             let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.ctxt.tcx, def_id, substs);
                             let ty = self.ctxt.tcx.item_type(resolved_def_id);
                             // TODO: investigate rustc trans use of liberate_bound_regions or similar here
@@ -1559,7 +1575,7 @@ impl<'a: 'b, 'b: 'e, 'v: 'a, 'tcx: 'v, 'e> InspirvBlock<'a, 'b, 'v, 'tcx> {
 
                         // Translate function call
                         let id = if let Some(&Attribute::Intrinsic(ref intrinsic)) = intrinsic {
-                            self.emit_intrinsic(intrinsic, args, signature.output)?
+                            self.emit_intrinsic(intrinsic, args, signature.output())?
                         } else {
                             // 'normal' function call
                             let args_ops = args.iter().map(|arg| self.trans_operand(arg)).collect::<PResult<Vec<_>>>()?;
