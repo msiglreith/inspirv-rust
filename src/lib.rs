@@ -3,6 +3,7 @@
     custom_attribute,
     rustc_private,
     slice_patterns,
+    cell_extras,
 )]
 
 #![feature(plugin)]
@@ -38,3 +39,5 @@ mod attribute;
 mod intrinsic;
 mod monomorphize;
 mod traits;
+
+mod thetis;
