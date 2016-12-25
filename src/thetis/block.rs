@@ -10,14 +10,14 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
         let mut bcx = self.bcx(bb);
         let data = &CellRef::clone(&self.mir)[bb];
 
-        debug!("trans_block({:?}={:?})", bb, data);
+        println!("trans_block({:?}={:?})", bb, data);
 
         for statement in &data.statements {
             bcx = self.trans_statement(bcx, statement);
         }
 
         let terminator = data.terminator();
-        debug!("trans_block: terminator: {:?}", terminator);
+        println!("trans_block: terminator: {:?}", terminator);
 
         self.trans_terminator();
     }

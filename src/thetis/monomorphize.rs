@@ -1,9 +1,35 @@
 
 use super::*;
+use rustc::hir::def_id::DefId;
 use rustc::infer::TransNormalize;
 use rustc::ty::fold::{TypeFolder, TypeFoldable};
 use rustc::ty::subst::Subst;
 use rustc::util::common::MemoizationMap;
+use rustc::util::ppaux;
+use std::fmt;
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Instance<'tcx> {
+    pub def: DefId,
+    pub substs: &'tcx Substs<'tcx>,
+}
+
+impl<'tcx> fmt::Display for Instance<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        ppaux::parameterized(f, &self.substs, self.def, &[])
+    }
+}
+
+impl<'tcx> Instance<'tcx> {
+    pub fn new(def_id: DefId, substs: &'tcx Substs<'tcx>)
+               -> Instance<'tcx> {
+        assert!(substs.regions().all(|&r| r == ty::ReErased));
+        Instance { def: def_id, substs: substs }
+    }
+    pub fn mono<'a>(scx: &SharedCrateContext<'a, 'tcx>, def_id: DefId) -> Instance<'tcx> {
+        Instance::new(def_id, scx.empty_substs_for_def_id(def_id))
+    }
+}
 
 /// Monomorphizes a type from the AST by first applying the in-scope
 /// substitutions and then normalizing any associated types.

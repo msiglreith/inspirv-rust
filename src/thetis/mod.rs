@@ -9,11 +9,16 @@ use rustc::mir::Mir;
 use rustc::mir::traversal;
 use rustc::middle::cstore::LinkMeta;
 use rustc::ty::subst::Substs;
+use rustc::ty::TypeFoldable;
+use rustc::traits::{self, SelectionContext, Reveal};
+use rustc::util::common::MemoizationMap;
+use rustc_trans::util::nodemap::{FxHashMap, FxHashSet, DefIdMap};
 use rustc::dep_graph::{DepGraph, DepNode, DepTrackingMap, DepTrackingMapConfig,
                        WorkProduct};
 use rustc::infer::TransNormalize;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::hir::def_id::DefId;
+use rustc::ty::adjustment::CustomCoerceUnsized;
 use rustc_incremental::IncrementalHashesMap;
 use rustc::session::Session;
 use rustc::session::config::{self, NoDebugInfo};
@@ -23,11 +28,17 @@ use rustc_data_structures::indexed_vec::IndexVec;
 use rustc_mir;
 use rustc_passes::{mir_stats};
 use rustc_trans::util::nodemap::NodeSet;
+use rustc_const_eval::ConstEvalErr;
 use syntax_pos::{Span};
 use syntax_pos::{DUMMY_SP, NO_EXPANSION, COMMAND_LINE_EXPN, BytePos};
 use syntax::attr;
+use syntax::ast::{self, NodeId};
+
+use self::monomorphize::Instance;
+use self::trans_item::TransItem;
 
 use std::cell::Ref;
+use std::rc::Rc;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -55,6 +66,30 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
+    /// Create a function context for the given function.
+    pub fn new(ccx: &'a CrateContext<'a, 'tcx>,
+               definition: Option<Instance<'tcx>>,
+               block_arena: &'a TypedArena<BlockS<'a, 'tcx>>)
+               -> FunctionContext<'a, 'tcx> {
+        let (param_substs, def_id) = match definition {
+            Some(instance) => {
+                validate_substs(instance.substs);
+                (instance.substs, Some(instance.def))
+            }
+            None => (ccx.tcx().intern_substs(&[]), None)
+        };
+
+        let mir = def_id.map(|id| ccx.tcx().item_mir(id));
+
+        FunctionContext {
+            mir: mir,
+            param_substs: param_substs,
+            span: None,
+            block_arena: block_arena,
+            ccx: ccx,
+        }
+    }
+
     pub fn mir(&self) -> Ref<'tcx, Mir<'tcx>> {
         self.mir.as_ref().map(Ref::clone).expect("fcx.mir was empty")
     }
@@ -88,6 +123,8 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
     export_map: ExportMap,
     exported_symbols: NodeSet,
     link_meta: LinkMeta,
+    translation_items: RefCell<FxHashSet<TransItem<'tcx>>>,
+    trait_cache: RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>>,
     project_cache: RefCell<DepTrackingMap<ProjectionCache<'tcx>>>,
 }
 
@@ -102,8 +139,14 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
             export_map: export_map,
             exported_symbols: exported_symbols,
             link_meta: link_meta,
+            translation_items: RefCell::new(FxHashSet()),
+            trait_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
             project_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
         }
+    }
+
+    pub fn trait_cache(&self) -> &RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>> {
+        &self.trait_cache
     }
 
     pub fn project_cache(&self) -> &RefCell<DepTrackingMap<ProjectionCache<'tcx>>> {
@@ -129,6 +172,20 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
     pub fn link_meta<'a>(&'a self) -> &'a LinkMeta {
         &self.link_meta
     }
+
+    pub fn translation_items(&self) -> &RefCell<FxHashSet<TransItem<'tcx>>> {
+        &self.translation_items
+    }
+
+    /// Given the def-id of some item that has no type parameters, make
+    /// a suitable "empty substs" for it.
+    pub fn empty_substs_for_def_id(&self, item_def_id: DefId) -> &'tcx Substs<'tcx> {
+        Substs::for_item(self.tcx(), item_def_id,
+                         |_, _| self.tcx().mk_region(ty::ReErased),
+                         |_, _| {
+            bug!("empty_substs_for_def_id: {:?} has type parameters", item_def_id)
+        })
+    }
 }
 
 pub struct CrateContext<'a, 'tcx: 'a> {
@@ -146,6 +203,19 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
     pub fn sess<'a>(&'a self) -> &'a Session {
         &self.shared.tcx.sess
+    }
+}
+
+// Implement DepTrackingMapConfig for `trait_cache`
+pub struct TraitSelectionCache<'tcx> {
+    data: PhantomData<&'tcx ()>
+}
+
+impl<'tcx> DepTrackingMapConfig for TraitSelectionCache<'tcx> {
+    type Key = ty::PolyTraitRef<'tcx>;
+    type Value = traits::Vtable<'tcx, ()>;
+    fn to_dep_node(key: &ty::PolyTraitRef<'tcx>) -> DepNode<DefId> {
+        key.to_poly_trait_predicate().dep_node()
     }
 }
 
@@ -226,7 +296,8 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     }
 
     pub fn build(&'blk self) -> BlockAndBuilder<'blk, 'tcx> {
-        unimplemented!()
+        // BlockAndBuilder::new(self, OwnedBuilder::new_with_ccx(self.ccx()))
+        BlockAndBuilder { bcx: self }
     }
 }
 
@@ -257,8 +328,9 @@ impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
     }
 }
 
-pub fn trans_mir<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) {
-    let mir = fcx.mir();
+pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) {
+    let bcx = fcx.build();
+    let mir = bcx.mir();
 
     // Allocate a `Block` for every basic block
     let block_bcxs: IndexVec<mir::BasicBlock, Block<'blk,'tcx>> =
@@ -277,6 +349,76 @@ pub fn trans_mir<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) {
         mircx.trans_block(bb);
     }
 }
+
+pub fn trans_static(ccx: &CrateContext,
+                    m: hir::Mutability,
+                    id: ast::NodeId,
+                    attrs: &[ast::Attribute])
+                    -> Result<(), ConstEvalErr> {
+    /*
+    unsafe {
+        let _icx = push_ctxt("trans_static");
+        let def_id = ccx.tcx().map.local_def_id(id);
+        let g = get_static(ccx, def_id);
+
+        let v = ::mir::trans_static_initializer(ccx, def_id)?;
+
+        // boolean SSA values are i1, but they have to be stored in i8 slots,
+        // otherwise some LLVM optimization passes don't work as expected
+        let mut val_llty = val_ty(v);
+        let v = if val_llty == Type::i1(ccx) {
+            val_llty = Type::i8(ccx);
+            llvm::LLVMConstZExt(v, val_llty.to_ref())
+        } else {
+            v
+        };
+
+        let ty = ccx.tcx().item_type(def_id);
+        let llty = type_of::type_of(ccx, ty);
+        let g = if val_llty == llty {
+            g
+        } else {
+            // If we created the global with the wrong type,
+            // correct the type.
+            let empty_string = CString::new("").unwrap();
+            let name_str_ref = CStr::from_ptr(llvm::LLVMGetValueName(g));
+            let name_string = CString::new(name_str_ref.to_bytes()).unwrap();
+            llvm::LLVMSetValueName(g, empty_string.as_ptr());
+            let new_g = llvm::LLVMRustGetOrInsertGlobal(
+                ccx.llmod(), name_string.as_ptr(), val_llty.to_ref());
+            // To avoid breaking any invariants, we leave around the old
+            // global for the moment; we'll replace all references to it
+            // with the new global later. (See base::trans_crate.)
+            ccx.statics_to_rauw().borrow_mut().push((g, new_g));
+            new_g
+        };
+        llvm::LLVMSetAlignment(g, type_of::align_of(ccx, ty));
+        llvm::LLVMSetInitializer(g, v);
+
+        // As an optimization, all shared statics which do not have interior
+        // mutability are placed into read-only memory.
+        if m != hir::MutMutable {
+            let tcontents = ty.type_contents(ccx.tcx());
+            if !tcontents.interior_unsafe() {
+                llvm::LLVMSetGlobalConstant(g, llvm::True);
+            }
+        }
+
+        debuginfo::create_global_var_metadata(ccx, id, g);
+
+        if attr::contains_name(attrs,
+                               "thread_local") {
+            llvm::set_thread_local(g, true);
+        }
+
+        base::set_link_section(ccx, g, attrs);
+
+        Ok(g)
+    }
+    */
+    unimplemented!()
+}
+
 
 pub fn translate_to_spirv<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                     analysis: ty::CrateAnalysis,
@@ -437,10 +579,137 @@ fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let metadata = time(tcx.sess.time_passes(), "write metadata", || {
         write_metadata(&shared_ccx, shared_ccx.exported_symbols())
     });
+
+    // Run the translation item collector
+    let translation_items = collect_translation_items(&shared_ccx);
+
+    let ccx = CrateContext { shared: &shared_ccx };
+
+    // translate MIR
+    for item in translation_items {
+        item.define(&ccx);
+        println!("{:?}", item.to_string(tcx));
+    }
+
+    /*
+    let def_ids = tcx.mir_map.borrow().keys();
+    for def_id in def_ids {
+        if !def_id.is_local() {
+            continue;
+        }
+
+        let mir = &mut tcx.mir_map.borrow()[&def_id].borrow_mut();
+
+        println!("{:?}", mir);
+    }
+    */
+}
+
+fn collect_translation_items<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>)
+                                                     -> FxHashSet<TransItem<'tcx>> {
+    let time_passes = scx.sess().time_passes();
+
+    let (items, inlining_map) =
+        time(time_passes, "translation item collection", || {
+            collector::collect_crate_translation_items(&scx)
+    });
+
+    items
+}
+
+pub fn custom_coerce_unsize_info<'scx, 'tcx>(scx: &SharedCrateContext<'scx, 'tcx>,
+                                             source_ty: Ty<'tcx>,
+                                             target_ty: Ty<'tcx>)
+                                             -> CustomCoerceUnsized {
+    let trait_ref = ty::Binder(ty::TraitRef {
+        def_id: scx.tcx().lang_items.coerce_unsized_trait().unwrap(),
+        substs: scx.tcx().mk_substs_trait(source_ty, &[target_ty])
+    });
+
+    match fulfill_obligation(scx, DUMMY_SP, trait_ref) {
+        traits::VtableImpl(traits::VtableImplData { impl_def_id, .. }) => {
+            scx.tcx().custom_coerce_unsized_kind(impl_def_id)
+        }
+        vtable => {
+            bug!("invalid CoerceUnsized vtable: {:?}", vtable);
+        }
+    }
+}
+
+/// Attempts to resolve an obligation. The result is a shallow vtable resolution -- meaning that we
+/// do not (necessarily) resolve all nested obligations on the impl. Note that type check should
+/// guarantee to us that all nested obligations *could be* resolved if we wanted to.
+pub fn fulfill_obligation<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
+                                    span: Span,
+                                    trait_ref: ty::PolyTraitRef<'tcx>)
+                                    -> traits::Vtable<'tcx, ()>
+{
+    let tcx = scx.tcx();
+
+    // Remove any references to regions; this helps improve caching.
+    let trait_ref = tcx.erase_regions(&trait_ref);
+
+    scx.trait_cache().memoize(trait_ref, || {
+        debug!("trans::fulfill_obligation(trait_ref={:?}, def_id={:?})",
+               trait_ref, trait_ref.def_id());
+
+        // Do the initial selection for the obligation. This yields the
+        // shallow result we are looking for -- that is, what specific impl.
+        tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
+            let mut selcx = SelectionContext::new(&infcx);
+
+            let obligation_cause = traits::ObligationCause::misc(span,
+                                                             ast::DUMMY_NODE_ID);
+            let obligation = traits::Obligation::new(obligation_cause,
+                                                     trait_ref.to_poly_trait_predicate());
+
+            let selection = match selcx.select(&obligation) {
+                Ok(Some(selection)) => selection,
+                Ok(None) => {
+                    // Ambiguity can happen when monomorphizing during trans
+                    // expands to some humongo type that never occurred
+                    // statically -- this humongo type can then overflow,
+                    // leading to an ambiguous result. So report this as an
+                    // overflow bug, since I believe this is the only case
+                    // where ambiguity can result.
+                    debug!("Encountered ambiguity selecting `{:?}` during trans, \
+                            presuming due to overflow",
+                           trait_ref);
+                    tcx.sess.span_fatal(span,
+                        "reached the recursion limit during monomorphization \
+                         (selection ambiguity)");
+                }
+                Err(e) => {
+                    span_bug!(span, "Encountered error `{:?}` selecting `{:?}` during trans",
+                              e, trait_ref)
+                }
+            };
+
+            debug!("fulfill_obligation: selection={:?}", selection);
+
+            // Currently, we use a fulfillment context to completely resolve
+            // all nested obligations. This is because they can inform the
+            // inference of the impl's type parameters.
+            let mut fulfill_cx = traits::FulfillmentContext::new();
+            let vtable = selection.map(|predicate| {
+                debug!("fulfill_obligation: register_predicate_obligation {:?}", predicate);
+                fulfill_cx.register_predicate_obligation(&infcx, predicate);
+            });
+            let vtable = infcx.drain_fulfillment_cx_or_panic(span, &mut fulfill_cx, &vtable);
+
+            info!("Cache miss: {:?} => {:?}", trait_ref, vtable);
+            vtable
+        })
+    })
+}
+
+pub fn validate_substs(substs: &Substs) {
+    assert!(!substs.needs_infer());
 }
 
 mod block;
+mod collector;
 mod monomorphize;
 mod statement;
 mod terminator;
-
+mod trans_item;

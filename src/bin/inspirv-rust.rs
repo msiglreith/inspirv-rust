@@ -14,12 +14,14 @@ extern crate rustc_errors as errors;
 extern crate syntax;
 extern crate syntax_pos;
 extern crate serialize;
+extern crate rustc_incremental;
 
 use inspirv_rust::trans;
 use rustc_trans::back::link;
 use rustc::dep_graph::DepGraph;
 use rustc::session::{Session, build_session, early_error};
 use rustc::session::config::{self, ErrorOutputType, Input, PrintRequest};
+use rustc::util::common::time;
 use rustc_driver::{driver, target_features, CompilerCalls, Compilation, RustcDefaultCalls};
 use rustc_metadata::cstore::CStore;
 use rustc::lint;
@@ -36,6 +38,8 @@ use syntax::ast;
 use syntax::feature_gate::{GatedCfg, UnstableFeatures};
 use syntax::parse::{self, PResult};
 use syntax_pos::DUMMY_SP;
+
+use inspirv_rust::thetis;
 
 struct SpirvCompilerCalls;
 
@@ -159,12 +163,21 @@ impl<'a> CompilerCalls<'a> for SpirvCompilerCalls {
             state.session.abort_if_errors();
 
             let tcx = state.tcx.unwrap();
+            let time_passes = state.session.time_passes();
+
+            // Need to recompute as we don't have directly access to it via CompilerCalls
+            let incremental_hashes_map =
+                time(time_passes,
+                     "compute_incremental_hashes_map",
+                     || rustc_incremental::compute_incremental_hashes_map(tcx));
+
             {
                 println!("Pre-trans");
                 tcx.print_debug_stats();
             }
 
-            trans::translate_to_spirv(&tcx, state.analysis.unwrap(), &state.out_dir);
+            thetis::translate_to_spirv(tcx, state.analysis.unwrap().clone(), &incremental_hashes_map, &state.out_dir);
+            // trans::translate_to_spirv(&tcx, state.analysis.unwrap(), &state.out_dir);
 
             {
                 println!("Post-trans");

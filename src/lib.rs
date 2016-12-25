@@ -22,6 +22,7 @@ extern crate rustc_passes;
 extern crate syntax_pos;
 extern crate rustc_trans;
 extern crate rustc_incremental;
+extern crate rustc_const_eval;
 
 extern crate arena;
 extern crate libc;
@@ -42,4 +43,4 @@ mod intrinsic;
 mod monomorphize;
 mod traits;
 
-mod thetis;
+pub mod thetis;
