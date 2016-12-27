@@ -34,16 +34,35 @@ use syntax_pos::{DUMMY_SP, NO_EXPANSION, COMMAND_LINE_EXPN, BytePos};
 use syntax::attr;
 use syntax::ast::{self, NodeId};
 
+use inspirv::types::Id;
+use inspirv_builder::module::{Type};
+
 use self::monomorphize::Instance;
 use self::trans_item::TransItem;
+use self::context::{CrateContext, SharedCrateContext};
 
 use std::cell::Ref;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::iter;
 
-// A lot of the code here is translated from the rustc LLVM translator
+// A lot of the code here is ported from the rustc LLVM translator
+
+struct Local {
+    pub id: Id,
+    pub ty: Type,
+}
+
+enum LocalRef {
+    Local(Local),
+    Ref {
+        local: Local,
+        referent: Option<Id>,
+    },
+    Interface(Vec<Local>),
+}
 
 /// Function context is the glue between MIR and functions of the SPIR-V builder.
 pub struct FunctionContext<'a, 'tcx: 'a> {
@@ -116,141 +135,9 @@ pub struct MirContext<'bcx, 'tcx: 'bcx> {
 
     /// A `Block` for each MIR `BasicBlock`
     blocks: IndexVec<mir::BasicBlock, Block<'bcx, 'tcx>>,
-}
 
-pub struct SharedCrateContext<'a, 'tcx: 'a> {
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    export_map: ExportMap,
-    exported_symbols: NodeSet,
-    link_meta: LinkMeta,
-    translation_items: RefCell<FxHashSet<TransItem<'tcx>>>,
-    trait_cache: RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>>,
-    project_cache: RefCell<DepTrackingMap<ProjectionCache<'tcx>>>,
-}
-
-impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
-    pub fn new(tcx: TyCtxt<'b, 'tcx, 'tcx>,
-               export_map: ExportMap,
-               exported_symbols: NodeSet,
-               link_meta: LinkMeta)
-               -> SharedCrateContext<'b, 'tcx> {
-        SharedCrateContext {
-            tcx: tcx,
-            export_map: export_map,
-            exported_symbols: exported_symbols,
-            link_meta: link_meta,
-            translation_items: RefCell::new(FxHashSet()),
-            trait_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
-            project_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
-        }
-    }
-
-    pub fn trait_cache(&self) -> &RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>> {
-        &self.trait_cache
-    }
-
-    pub fn project_cache(&self) -> &RefCell<DepTrackingMap<ProjectionCache<'tcx>>> {
-        &self.project_cache
-    }
-
-    pub fn tcx<'a>(&'a self) -> TyCtxt<'a, 'tcx, 'tcx> {
-        self.tcx
-    }
-
-    pub fn export_map<'a>(&'a self) -> &'a ExportMap {
-        &self.export_map
-    }
-
-    pub fn exported_symbols<'a>(&'a self) -> &'a NodeSet {
-        &self.exported_symbols
-    }
-
-    pub fn sess<'a>(&'a self) -> &'a Session {
-        &self.tcx.sess
-    }
-
-    pub fn link_meta<'a>(&'a self) -> &'a LinkMeta {
-        &self.link_meta
-    }
-
-    pub fn translation_items(&self) -> &RefCell<FxHashSet<TransItem<'tcx>>> {
-        &self.translation_items
-    }
-
-    /// Given the def-id of some item that has no type parameters, make
-    /// a suitable "empty substs" for it.
-    pub fn empty_substs_for_def_id(&self, item_def_id: DefId) -> &'tcx Substs<'tcx> {
-        Substs::for_item(self.tcx(), item_def_id,
-                         |_, _| self.tcx().mk_region(ty::ReErased),
-                         |_, _| {
-            bug!("empty_substs_for_def_id: {:?} has type parameters", item_def_id)
-        })
-    }
-}
-
-pub struct CrateContext<'a, 'tcx: 'a> {
-    shared: &'a SharedCrateContext<'a, 'tcx>,
-}
-
-impl<'b, 'tcx> CrateContext<'b, 'tcx> {
-    pub fn shared(&self) -> &'b SharedCrateContext<'b, 'tcx> {
-        self.shared
-    }
-
-    pub fn tcx<'a>(&'a self) -> TyCtxt<'a, 'tcx, 'tcx> {
-        self.shared.tcx
-    }
-
-    pub fn sess<'a>(&'a self) -> &'a Session {
-        &self.shared.tcx.sess
-    }
-}
-
-// Implement DepTrackingMapConfig for `trait_cache`
-pub struct TraitSelectionCache<'tcx> {
-    data: PhantomData<&'tcx ()>
-}
-
-impl<'tcx> DepTrackingMapConfig for TraitSelectionCache<'tcx> {
-    type Key = ty::PolyTraitRef<'tcx>;
-    type Value = traits::Vtable<'tcx, ()>;
-    fn to_dep_node(key: &ty::PolyTraitRef<'tcx>) -> DepNode<DefId> {
-        key.to_poly_trait_predicate().dep_node()
-    }
-}
-
-pub struct ProjectionCache<'gcx> {
-    data: PhantomData<&'gcx ()>
-}
-
-impl<'gcx> DepTrackingMapConfig for ProjectionCache<'gcx> {
-    type Key = Ty<'gcx>;
-    type Value = Ty<'gcx>;
-    fn to_dep_node(key: &Self::Key) -> DepNode<DefId> {
-        // Ideally, we'd just put `key` into the dep-node, but we
-        // can't put full types in there. So just collect up all the
-        // def-ids of structs/enums as well as any traits that we
-        // project out of. It doesn't matter so much what we do here,
-        // except that if we are too coarse, we'll create overly
-        // coarse edges between impls and the trans. For example, if
-        // we just used the def-id of things we are projecting out of,
-        // then the key for `<Foo as SomeTrait>::T` and `<Bar as
-        // SomeTrait>::T` would both share a dep-node
-        // (`TraitSelect(SomeTrait)`), and hence the impls for both
-        // `Foo` and `Bar` would be considered inputs. So a change to
-        // `Bar` would affect things that just normalized `Foo`.
-        // Anyway, this heuristic is not ideal, but better than
-        // nothing.
-        let def_ids: Vec<DefId> =
-            key.walk()
-               .filter_map(|t| match t.sty {
-                   ty::TyAdt(adt_def, _) => Some(adt_def.did),
-                   ty::TyProjection(ref proj) => Some(proj.trait_ref.def_id),
-                   _ => None,
-               })
-               .collect();
-        DepNode::TraitSelect(def_ids)
-    }
+    /// The location where each MIR arg/var/tmp/ret is stored.
+    locals: IndexVec<mir::Local, Option<LocalRef>>,
 }
 
 // Basic block context.  We create a block context for each basic block
@@ -308,6 +195,9 @@ pub struct BlockAndBuilder<'blk, 'tcx: 'blk> {
 }
 
 impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
+    pub fn ccx(&self) -> &'blk CrateContext<'blk, 'tcx> {
+        self.bcx.ccx()
+    }
     pub fn fcx(&self) -> &'blk FunctionContext<'blk, 'tcx> {
         self.bcx.fcx()
     }
@@ -326,11 +216,17 @@ impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
     {
         self.bcx.monomorphize(value)
     }
+
+    pub fn with_block<F, R>(&self, f: F) -> R
+        where F: FnOnce(Block<'blk, 'tcx>) -> R
+    {
+        let result = f(self.bcx);
+        result
+    }
 }
 
 pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) {
-    let bcx = fcx.build();
-    let mir = bcx.mir();
+    let mir = fcx.mir();
 
     // Allocate a `Block` for every basic block
     let block_bcxs: IndexVec<mir::BasicBlock, Block<'blk,'tcx>> =
@@ -340,6 +236,61 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
         mir: Ref::clone(&mir),
         fcx: fcx,
         blocks: block_bcxs,
+        locals: IndexVec::new(),
+    };
+
+    mircx.locals = {
+        let args = arg_local_refs(&fcx, &mir);
+
+        let vars_and_temps = mir.vars_and_temps_iter().map(|local| {
+            let decl = &mir.local_decls[local];
+            let ty = fcx.monomorphize(&decl.ty);
+
+            if let Some(name) = decl.name {
+                // User variable
+                println!("alloc: {:?} ({}) -> lvalue", local, name);
+            } else {
+                // Temporary
+                println!("alloc: {:?} -> lvalue", local);
+            }
+
+            unimplemented!()
+        });
+
+        /*
+        let mut allocate_local = |local| {
+            let decl = &mir.local_decls[local];
+            let ty = fcx.monomorphize(&decl.ty);
+
+            if let Some(name) = decl.name {
+                // User variable
+                debug!("alloc: {:?} ({}) -> lvalue", local, name);
+                LocalRef::Lvalue(lvalue)
+            } else {
+                // Temporary or return pointer
+                if local == mir::RETURN_POINTER {
+                    debug!("alloc: {:?} (return pointer) -> lvalue", local);
+                    LocalRef::Lvalue(LvalueRef::new_sized(llretptr, LvalueTy::from_ty(ty)))
+                } else {
+                    debug!("alloc: {:?} -> lvalue", local);
+                    LocalRef::Lvalue(LvalueRef::alloca(&bcx, ty, &format!("{:?}", local)))
+                }
+            }
+        };
+        */
+
+        let ret = {
+            let decl = &mir.local_decls[mir::RETURN_POINTER];
+            let ty = fcx.monomorphize(&decl.ty);
+
+            debug!("alloc: {:?} (return pointer) -> lvalue", mir::RETURN_POINTER);
+            unimplemented!()
+        };
+
+        iter::once(ret)
+            .chain(args.into_iter())
+            .chain(vars_and_temps)
+            .collect()
     };
 
     let mut rpo = traversal::reverse_postorder(&mir);
@@ -348,6 +299,212 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
     for (bb, _) in rpo {
         mircx.trans_block(bb);
     }
+}
+
+fn arg_local_refs<'bcx, 'tcx>(fcx: &FunctionContext<'bcx, 'tcx>,
+                              mir: &mir::Mir<'tcx>)
+                              -> Vec<Option<LocalRef>> {
+    let tcx = fcx.ccx.tcx();
+    let mut idx = 0;
+
+    /*
+    let mut llarg_idx = fcx.fn_ty.ret.is_indirect() as usize;
+
+    mir.args_iter().enumerate().map(|(arg_index, local)| {
+        let arg_decl = &mir.local_decls[local];
+        let arg_ty = bcx.monomorphize(&arg_decl.ty);
+
+        if Some(local) == mir.spread_arg {
+            // This argument (e.g. the last argument in the "rust-call" ABI)
+            // is a tuple that was spread at the ABI level and now we have
+            // to reconstruct it into a tuple local variable, from multiple
+            // individual LLVM function arguments.
+
+            let tupled_arg_tys = match arg_ty.sty {
+                ty::TyTuple(ref tys) => tys,
+                _ => bug!("spread argument isn't a tuple?!")
+            };
+
+            let lltemp = bcx.with_block(|bcx| {
+                base::alloc_ty(bcx, arg_ty, &format!("arg{}", arg_index))
+            });
+            for (i, &tupled_arg_ty) in tupled_arg_tys.iter().enumerate() {
+                let dst = bcx.struct_gep(lltemp, i);
+                let arg = &fcx.fn_ty.args[idx];
+                idx += 1;
+                if common::type_is_fat_ptr(tcx, tupled_arg_ty) {
+                    // We pass fat pointers as two words, but inside the tuple
+                    // they are the two sub-fields of a single aggregate field.
+                    let meta = &fcx.fn_ty.args[idx];
+                    idx += 1;
+                    arg.store_fn_arg(bcx, &mut llarg_idx,
+                                     base::get_dataptr_builder(bcx, dst));
+                    meta.store_fn_arg(bcx, &mut llarg_idx,
+                                      base::get_meta_builder(bcx, dst));
+                } else {
+                    arg.store_fn_arg(bcx, &mut llarg_idx, dst);
+                }
+            }
+
+            // Now that we have one alloca that contains the aggregate value,
+            // we can create one debuginfo entry for the argument.
+            bcx.with_block(|bcx| arg_scope.map(|scope| {
+                let variable_access = VariableAccess::DirectVariable {
+                    alloca: lltemp
+                };
+                declare_local(bcx, arg_decl.name.unwrap_or(keywords::Invalid.name()),
+                              arg_ty, scope, variable_access,
+                              VariableKind::ArgumentVariable(arg_index + 1),
+                              bcx.fcx().span.unwrap_or(DUMMY_SP));
+            }));
+
+            return LocalRef::Lvalue(LvalueRef::new_sized(lltemp, LvalueTy::from_ty(arg_ty)));
+        }
+
+        let arg = &fcx.fn_ty.args[idx];
+        idx += 1;
+        let llval = if arg.is_indirect() && bcx.sess().opts.debuginfo != FullDebugInfo {
+            // Don't copy an indirect argument to an alloca, the caller
+            // already put it in a temporary alloca and gave it up, unless
+            // we emit extra-debug-info, which requires local allocas :(.
+            // FIXME: lifetimes
+            if arg.pad.is_some() {
+                llarg_idx += 1;
+            }
+            let llarg = llvm::get_param(fcx.llfn, llarg_idx as c_uint);
+            llarg_idx += 1;
+            llarg
+        } else if !lvalue_locals.contains(local.index()) &&
+                  !arg.is_indirect() && arg.cast.is_none() &&
+                  arg_scope.is_none() {
+            if arg.is_ignore() {
+                return LocalRef::new_operand(bcx.ccx(), arg_ty);
+            }
+
+            // We don't have to cast or keep the argument in the alloca.
+            // FIXME(eddyb): We should figure out how to use llvm.dbg.value instead
+            // of putting everything in allocas just so we can use llvm.dbg.declare.
+            if arg.pad.is_some() {
+                llarg_idx += 1;
+            }
+            let llarg = llvm::get_param(fcx.llfn, llarg_idx as c_uint);
+            llarg_idx += 1;
+            let val = if common::type_is_fat_ptr(tcx, arg_ty) {
+                let meta = &fcx.fn_ty.args[idx];
+                idx += 1;
+                assert_eq!((meta.cast, meta.pad), (None, None));
+                let llmeta = llvm::get_param(fcx.llfn, llarg_idx as c_uint);
+                llarg_idx += 1;
+                OperandValue::Pair(llarg, llmeta)
+            } else {
+                OperandValue::Immediate(llarg)
+            };
+            let operand = OperandRef {
+                val: val,
+                ty: arg_ty
+            };
+            return LocalRef::Operand(Some(operand.unpack_if_pair(bcx)));
+        } else {
+            let lltemp = bcx.with_block(|bcx| {
+                base::alloc_ty(bcx, arg_ty, &format!("arg{}", arg_index))
+            });
+            if common::type_is_fat_ptr(tcx, arg_ty) {
+                // we pass fat pointers as two words, but we want to
+                // represent them internally as a pointer to two words,
+                // so make an alloca to store them in.
+                let meta = &fcx.fn_ty.args[idx];
+                idx += 1;
+                arg.store_fn_arg(bcx, &mut llarg_idx,
+                                 base::get_dataptr_builder(bcx, lltemp));
+                meta.store_fn_arg(bcx, &mut llarg_idx,
+                                  base::get_meta_builder(bcx, lltemp));
+            } else  {
+                // otherwise, arg is passed by value, so make a
+                // temporary and store it there
+                arg.store_fn_arg(bcx, &mut llarg_idx, lltemp);
+            }
+            lltemp
+        };
+        bcx.with_block(|bcx| arg_scope.map(|scope| {
+            // Is this a regular argument?
+            if arg_index > 0 || mir.upvar_decls.is_empty() {
+                declare_local(bcx, arg_decl.name.unwrap_or(keywords::Invalid.name()), arg_ty,
+                              scope, VariableAccess::DirectVariable { alloca: llval },
+                              VariableKind::ArgumentVariable(arg_index + 1),
+                              bcx.fcx().span.unwrap_or(DUMMY_SP));
+                return;
+            }
+
+            // Or is it the closure environment?
+            let (closure_ty, env_ref) = if let ty::TyRef(_, mt) = arg_ty.sty {
+                (mt.ty, true)
+            } else {
+                (arg_ty, false)
+            };
+            let upvar_tys = if let ty::TyClosure(def_id, substs) = closure_ty.sty {
+                substs.upvar_tys(def_id, tcx)
+            } else {
+                bug!("upvar_decls with non-closure arg0 type `{}`", closure_ty);
+            };
+
+            // Store the pointer to closure data in an alloca for debuginfo
+            // because that's what the llvm.dbg.declare intrinsic expects.
+
+            // FIXME(eddyb) this shouldn't be necessary but SROA seems to
+            // mishandle DW_OP_plus not preceded by DW_OP_deref, i.e. it
+            // doesn't actually strip the offset when splitting the closure
+            // environment into its components so it ends up out of bounds.
+            let env_ptr = if !env_ref {
+                use base::*;
+                use build::*;
+                use common::*;
+                let alloc = alloca(bcx, val_ty(llval), "__debuginfo_env_ptr");
+                Store(bcx, llval, alloc);
+                alloc
+            } else {
+                llval
+            };
+
+            let llclosurety = type_of::type_of(bcx.ccx(), closure_ty);
+            for (i, (decl, ty)) in mir.upvar_decls.iter().zip(upvar_tys).enumerate() {
+                let byte_offset_of_var_in_env =
+                    machine::llelement_offset(bcx.ccx(), llclosurety, i);
+
+                let ops = unsafe {
+                    [llvm::LLVMRustDIBuilderCreateOpDeref(),
+                     llvm::LLVMRustDIBuilderCreateOpPlus(),
+                     byte_offset_of_var_in_env as i64,
+                     llvm::LLVMRustDIBuilderCreateOpDeref()]
+                };
+
+                // The environment and the capture can each be indirect.
+
+                // FIXME(eddyb) see above why we have to keep
+                // a pointer in an alloca for debuginfo atm.
+                let mut ops = if env_ref || true { &ops[..] } else { &ops[1..] };
+
+                let ty = if let (true, &ty::TyRef(_, mt)) = (decl.by_ref, &ty.sty) {
+                    mt.ty
+                } else {
+                    ops = &ops[..ops.len() - 1];
+                    ty
+                };
+
+                let variable_access = VariableAccess::IndirectVariable {
+                    alloca: env_ptr,
+                    address_operations: &ops
+                };
+                declare_local(bcx, decl.debug_name, ty, scope, variable_access,
+                              VariableKind::CapturedVariable,
+                              bcx.fcx().span.unwrap_or(DUMMY_SP));
+            }
+        }));
+        LocalRef::Lvalue(LvalueRef::new_sized(llval, LvalueTy::from_ty(arg_ty)))
+    }).collect()
+
+    */
+
+    Vec::new()
 }
 
 pub fn trans_static(ccx: &CrateContext,
@@ -583,26 +740,17 @@ fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // Run the translation item collector
     let translation_items = collect_translation_items(&shared_ccx);
 
-    let ccx = CrateContext { shared: &shared_ccx };
+    let ccx = CrateContext::new(&shared_ccx);
+
+    for item in &translation_items {
+        item.predefine(&ccx);
+    }
 
     // translate MIR
     for item in translation_items {
-        item.define(&ccx);
         println!("{:?}", item.to_string(tcx));
+        item.define(&ccx);
     }
-
-    /*
-    let def_ids = tcx.mir_map.borrow().keys();
-    for def_id in def_ids {
-        if !def_id.is_local() {
-            continue;
-        }
-
-        let mir = &mut tcx.mir_map.borrow()[&def_id].borrow_mut();
-
-        println!("{:?}", mir);
-    }
-    */
 }
 
 fn collect_translation_items<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>)
@@ -707,9 +855,19 @@ pub fn validate_substs(substs: &Substs) {
     assert!(!substs.needs_infer());
 }
 
+mod adt;
+mod attributes;
 mod block;
 mod collector;
+mod constants;
+mod context;
+mod error;
+mod intrinsic;
+mod lvalue;
 mod monomorphize;
+mod operand;
+mod rvalue;
 mod statement;
 mod terminator;
 mod trans_item;
+mod type_of;

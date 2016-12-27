@@ -1,5 +1,6 @@
 #![feature(
     box_syntax,
+    box_patterns,
     custom_attribute,
     rustc_private,
     slice_patterns,

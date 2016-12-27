@@ -9,7 +9,8 @@ use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::subst::Substs;
 use syntax::ast::{self, NodeId};
 use super::monomorphize::{self, Instance};
-use super::{FunctionContext, CrateContext, SharedCrateContext};
+use super::context::{CrateContext, SharedCrateContext};
+use super::{FunctionContext};
 use super::{trans_function, trans_static};
 
 use std::fmt::Write;
@@ -22,6 +23,10 @@ pub enum TransItem<'tcx> {
 }
 
 impl<'a, 'tcx> TransItem<'tcx> {
+    pub fn predefine(&self, ccx: &CrateContext<'a, 'tcx>) {
+        // TODO:
+    }
+
     pub fn define(&self, ccx: &CrateContext<'a, 'tcx>) {
         match *self {
             TransItem::Static(node_id) => {

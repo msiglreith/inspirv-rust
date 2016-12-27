@@ -12,12 +12,12 @@ use rustc::ty::{self, Ty, TypeFoldable, TyCtxt};
 use rustc_trans::util::nodemap::{FxHashMap, FxHashSet, DefIdMap};
 use rustc::ty::adjustment::CustomCoerceUnsized;
 use rustc_const_eval as const_eval;
-use thetis::{SharedCrateContext};
-use thetis::monomorphize::{self, Instance};
-use thetis::trans_item::{DefPathBasedNames, TransItem};
+use super::context::{SharedCrateContext};
+use super::monomorphize::{self, Instance};
+use super::trans_item::{DefPathBasedNames, TransItem};
 use syntax_pos::{DUMMY_SP};
 
-use thetis::{custom_coerce_unsize_info, fulfill_obligation};
+use super::{custom_coerce_unsize_info, fulfill_obligation};
 
 /// Maps every translation item to all translation items it references in its
 /// body.
