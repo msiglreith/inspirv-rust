@@ -1,12 +1,15 @@
 
 use std::collections::HashMap;
 use rustc::session::Session;
+use rustc::hir;
+use rustc::hir::def_id::DefId;
 use syntax;
 use syntax::ast::{LitKind, LitIntType, MetaItemKind, NestedMetaItemKind};
 use syntax::symbol::InternedString;
 use inspirv::core::enumeration::*;
 use intrinsic::Intrinsic;
 use super::error::{PResult, DiagnosticBuilderExt};
+use super::context::CrateContext;
 
 #[derive(Clone, Debug)]
 pub enum Attribute {
@@ -35,6 +38,58 @@ pub enum Attribute {
         set: u64,
         binding: u64,
     },
+}
+
+pub fn attributes<'a, 'tcx: 'a>(cx: &'a CrateContext<'a, 'tcx>, def_id: DefId) -> Vec<Attribute> {
+    let attrs = cx.tcx().get_attrs(def_id);
+    match parse(cx.sess(), &attrs) {
+        Ok(attrs) => attrs,
+        Err(mut err) => {
+            err.emit();
+            Vec::new()
+        }
+    }
+}
+
+pub fn struct_field_attributes<'a, 'tcx: 'a>(
+        cx: &'a CrateContext<'a, 'tcx>,
+        struct_id: DefId,
+        field_id: DefId) -> Vec<Attribute> {
+    let tcx = cx.tcx();
+    let (item, field_id) = if let Some(struct_id) = tcx.map.as_local_node_id(struct_id) {
+        let item = tcx.map.get(struct_id);
+        let field_id = tcx.map.as_local_node_id(field_id).unwrap();
+        if let hir::map::Node::NodeItem(item) = item {
+            (item, field_id)
+        } else {
+            bug!("Struct node should be a NodeItem {:?}", item)
+        }
+    } else {
+        // TODO: cleanup and not sure if correct..
+        let item_id = tcx.sess.cstore.maybe_get_item_ast(tcx, struct_id).unwrap().1;
+        let item = tcx.map.get(item_id);
+        let field_id = tcx.map.as_local_node_id(field_id).unwrap();
+        if let hir::map::Node::NodeItem(item) = item {
+            (item, field_id)
+        } else {
+            bug!("Struct node should be a inlined item {:?}", item)
+        }
+    };
+
+    if let hir::Item_::ItemStruct(ref variant_data, _) = item.node {
+        let field = variant_data.fields().iter()
+                                .find(|field| field.id == field_id)
+                                .expect("Unable to find struct field by id");
+        match parse(tcx.sess, &field.attrs) {
+            Ok(attrs) => attrs,
+            Err(mut err) => {
+                err.emit();
+                Vec::new()
+            }
+        }
+    } else {
+        bug!("Struct item node should be a struct {:?}", item.node)
+    }
 }
 
 pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> PResult<'a, Vec<Attribute>> {

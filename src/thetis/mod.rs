@@ -34,12 +34,15 @@ use syntax_pos::{DUMMY_SP, NO_EXPANSION, COMMAND_LINE_EXPN, BytePos};
 use syntax::attr;
 use syntax::ast::{self, NodeId};
 
-use inspirv::types::Id;
-use inspirv_builder::module::{Type};
+use inspirv::types::{Id, LiteralInteger};
+use inspirv::core::enumeration::*;
+use inspirv_builder::module::{ModuleBuilder, Type};
 
+use self::attributes::Attribute;
 use self::monomorphize::Instance;
 use self::trans_item::TransItem;
 use self::context::{CrateContext, SharedCrateContext};
+use self::type_of::SpvType;
 
 use std::cell::Ref;
 use std::rc::Rc;
@@ -50,11 +53,13 @@ use std::iter;
 
 // A lot of the code here is ported from the rustc LLVM translator
 
+#[derive(Debug)]
 struct Local {
     pub id: Id,
     pub ty: Type,
 }
 
+#[derive(Debug)]
 enum LocalRef {
     Local(Local),
     Ref {
@@ -64,10 +69,24 @@ enum LocalRef {
     Interface(Vec<Local>),
 }
 
+impl LocalRef {
+    fn from(id: Id, t: SpvType) -> LocalRef {
+        match t {
+            SpvType::NoRef(ty) => LocalRef::Local(Local { id: id, ty: ty}),
+            SpvType::Ref { ty, referent, .. } => LocalRef::Ref {
+                local: Local { id: id, ty: ty},
+                referent: referent,
+            },
+        }
+    }
+}
+
 /// Function context is the glue between MIR and functions of the SPIR-V builder.
 pub struct FunctionContext<'a, 'tcx: 'a> {
     // The MIR for this function.
     pub mir: Option<Ref<'tcx, Mir<'tcx>>>,
+
+    pub def_id: Option<DefId>,
 
     // If this function is being monomorphized, this contains the type
     // substitutions used.
@@ -102,6 +121,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
 
         FunctionContext {
             mir: mir,
+            def_id: def_id,
             param_substs: param_substs,
             span: None,
             block_arena: block_arena,
@@ -111,6 +131,18 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
 
     pub fn mir(&self) -> Ref<'tcx, Mir<'tcx>> {
         self.mir.as_ref().map(Ref::clone).expect("fcx.mir was empty")
+    }
+
+    pub fn spv(&self) -> &'a RefCell<ModuleBuilder> {
+        self.ccx.spv()
+    }
+
+    pub fn attributes(&self) -> Vec<attributes::Attribute> {
+        if let Some(def_id) = self.def_id {
+            attributes::attributes(self.ccx, def_id)
+        } else {
+            Vec::new()
+        }
     }
 
     pub fn new_block(&'a self) -> Block<'a, 'tcx> {
@@ -168,7 +200,12 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     pub fn tcx(&self) -> TyCtxt<'blk, 'tcx, 'tcx> {
         self.fcx.ccx.tcx()
     }
-    pub fn sess(&self) -> &'blk Session { self.fcx.ccx.sess() }
+    pub fn sess(&self) -> &'blk Session {
+        self.fcx.ccx.sess()
+    }
+    pub fn spv<'a>(&'a self) -> &'a RefCell<ModuleBuilder> {
+        self.fcx.spv()
+    }
 
     pub fn mir(&self) -> Ref<'tcx, Mir<'tcx>> {
         self.fcx.mir()
@@ -226,7 +263,19 @@ impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
 }
 
 pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) {
+    let fn_attrs = fcx.attributes();
+    println!("{:?}", fn_attrs);
+
+    // We don't translate builtin functions, these will be handled internally
+    if fn_attrs.iter().any(|attr| match *attr {
+        Attribute::CompilerBuiltin | Attribute::Intrinsic(..) => true,
+        _ => false
+    }) {
+        return;
+    }
+
     let mir = fcx.mir();
+    let tcx = fcx.ccx.tcx();
 
     // Allocate a `Block` for every basic block
     let block_bcxs: IndexVec<mir::BasicBlock, Block<'blk,'tcx>> =
@@ -239,45 +288,113 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
         locals: IndexVec::new(),
     };
 
+    // Check if we have an entry point
+    let entry_point = fn_attrs.iter().find(|attr| match **attr {
+        Attribute::EntryPoint { .. } => true,
+        _ => false,
+    });
+
     mircx.locals = {
-        let args = arg_local_refs(&fcx, &mir);
+        let args = mir.args_iter().map(|local| {
+            let mut builder = fcx.spv().borrow_mut();
+            let decl = &mir.local_decls[local];
+            let ty = fcx.monomorphize(&decl.ty);
+
+            if entry_point.is_some() {
+                // Entry points require special handling as they don't have
+                // input in terms of passing stuff to the function but rather
+                // defined by constant buffers, vertex attributes, samples, etc.
+                if let Some(ty_did) = ty.ty_to_def_id() {
+                    let attrs = attributes::attributes(fcx.ccx, ty_did);
+                    let interface = attrs.iter().any(|attr| match *attr {
+                            Attribute::Interface => true,
+                            _ => false,
+                        });
+                    let const_buffer = attrs.iter().any(|attr| match *attr {
+                            Attribute::ConstBuffer => true,
+                            _ => false,
+                        });
+
+                    if interface {
+                        if let ty::TyAdt(adt, subs) = ty.sty {
+                            // Unwrap wrapper type
+                            let struct_ty = adt.struct_variant().fields[0].ty(tcx, subs);
+                            if let ty::TyAdt(adt, subs) = struct_ty.sty {
+                                let struct_ty_did = struct_ty.ty_to_def_id().unwrap();
+                                let interfaces = adt.struct_variant().fields.iter().map(|field| {
+                                    let ty = type_of::spv_type_of(fcx.ccx, field.ty(tcx, subs)).no_ref().unwrap();
+                                    let name = format!("{}_{}", tcx.item_name(struct_ty_did).as_str(), field.name.as_str());
+
+                                    let id = builder.define_variable(name.as_str(), ty.clone(),
+                                                                 StorageClass::StorageClassInput);
+                                    let field_attrs = attributes::struct_field_attributes(fcx.ccx, struct_ty_did, field.did);
+                                    for attr in field_attrs {
+                                        match attr {
+                                            Attribute::Location { location } => {
+                                                builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
+                                            }
+                                            // Rust doesn't allow attributes associated with `type foo = bar` /:
+                                            Attribute::Builtin { builtin } => {
+                                                // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
+                                                builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
+                                            }
+                                            _ => ()
+                                        }
+                                    }
+
+                                    Local {
+                                        id: id,
+                                        ty: ty,
+                                    }
+                                }).collect::<Vec<_>>();
+                                return Some(LocalRef::Interface(interfaces))
+                            }
+                        }
+
+                        bug!("Input argument inner type needs to be a struct type")
+                    } else if const_buffer {
+                        unimplemented!()
+                    }
+
+                    unimplemented!()
+                } else {
+                    bug!()
+                }
+            } else {
+                // Normal function
+                let spv_id = builder.alloc_id();
+                let spv_ty = type_of::spv_type_of(fcx.ccx, ty);
+
+                Some(LocalRef::from(spv_id, spv_ty))
+            }
+        });
+
+        println!("arguments: {:?}", args.collect::<Vec<_>>());
 
         let vars_and_temps = mir.vars_and_temps_iter().map(|local| {
+            let mut builder = fcx.spv().borrow_mut();
             let decl = &mir.local_decls[local];
             let ty = fcx.monomorphize(&decl.ty);
 
             if let Some(name) = decl.name {
-                // User variable
                 println!("alloc: {:?} ({}) -> lvalue", local, name);
             } else {
-                // Temporary
                 println!("alloc: {:?} -> lvalue", local);
             }
 
-            unimplemented!()
+            let spv_id = builder.alloc_id();
+            let spv_ty = type_of::spv_type_of(fcx.ccx, ty);
+
+            if Type::Void == *spv_ty.ty() {
+                // just skip it..
+                None
+            } else {
+                // TODO 
+                Some(LocalRef::from(spv_id, spv_ty))
+            }
         });
 
-        /*
-        let mut allocate_local = |local| {
-            let decl = &mir.local_decls[local];
-            let ty = fcx.monomorphize(&decl.ty);
-
-            if let Some(name) = decl.name {
-                // User variable
-                debug!("alloc: {:?} ({}) -> lvalue", local, name);
-                LocalRef::Lvalue(lvalue)
-            } else {
-                // Temporary or return pointer
-                if local == mir::RETURN_POINTER {
-                    debug!("alloc: {:?} (return pointer) -> lvalue", local);
-                    LocalRef::Lvalue(LvalueRef::new_sized(llretptr, LvalueTy::from_ty(ty)))
-                } else {
-                    debug!("alloc: {:?} -> lvalue", local);
-                    LocalRef::Lvalue(LvalueRef::alloca(&bcx, ty, &format!("{:?}", local)))
-                }
-            }
-        };
-        */
+        println!("vars and temps: {:?}", vars_and_temps.collect::<Vec<_>>());
 
         let ret = {
             let decl = &mir.local_decls[mir::RETURN_POINTER];
@@ -288,7 +405,7 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
         };
 
         iter::once(ret)
-            .chain(args.into_iter())
+            .chain(args)
             .chain(vars_and_temps)
             .collect()
     };
@@ -307,202 +424,10 @@ fn arg_local_refs<'bcx, 'tcx>(fcx: &FunctionContext<'bcx, 'tcx>,
     let tcx = fcx.ccx.tcx();
     let mut idx = 0;
 
-    /*
-    let mut llarg_idx = fcx.fn_ty.ret.is_indirect() as usize;
-
-    mir.args_iter().enumerate().map(|(arg_index, local)| {
+    mir.args_iter().map(|local| {
         let arg_decl = &mir.local_decls[local];
-        let arg_ty = bcx.monomorphize(&arg_decl.ty);
-
-        if Some(local) == mir.spread_arg {
-            // This argument (e.g. the last argument in the "rust-call" ABI)
-            // is a tuple that was spread at the ABI level and now we have
-            // to reconstruct it into a tuple local variable, from multiple
-            // individual LLVM function arguments.
-
-            let tupled_arg_tys = match arg_ty.sty {
-                ty::TyTuple(ref tys) => tys,
-                _ => bug!("spread argument isn't a tuple?!")
-            };
-
-            let lltemp = bcx.with_block(|bcx| {
-                base::alloc_ty(bcx, arg_ty, &format!("arg{}", arg_index))
-            });
-            for (i, &tupled_arg_ty) in tupled_arg_tys.iter().enumerate() {
-                let dst = bcx.struct_gep(lltemp, i);
-                let arg = &fcx.fn_ty.args[idx];
-                idx += 1;
-                if common::type_is_fat_ptr(tcx, tupled_arg_ty) {
-                    // We pass fat pointers as two words, but inside the tuple
-                    // they are the two sub-fields of a single aggregate field.
-                    let meta = &fcx.fn_ty.args[idx];
-                    idx += 1;
-                    arg.store_fn_arg(bcx, &mut llarg_idx,
-                                     base::get_dataptr_builder(bcx, dst));
-                    meta.store_fn_arg(bcx, &mut llarg_idx,
-                                      base::get_meta_builder(bcx, dst));
-                } else {
-                    arg.store_fn_arg(bcx, &mut llarg_idx, dst);
-                }
-            }
-
-            // Now that we have one alloca that contains the aggregate value,
-            // we can create one debuginfo entry for the argument.
-            bcx.with_block(|bcx| arg_scope.map(|scope| {
-                let variable_access = VariableAccess::DirectVariable {
-                    alloca: lltemp
-                };
-                declare_local(bcx, arg_decl.name.unwrap_or(keywords::Invalid.name()),
-                              arg_ty, scope, variable_access,
-                              VariableKind::ArgumentVariable(arg_index + 1),
-                              bcx.fcx().span.unwrap_or(DUMMY_SP));
-            }));
-
-            return LocalRef::Lvalue(LvalueRef::new_sized(lltemp, LvalueTy::from_ty(arg_ty)));
-        }
-
-        let arg = &fcx.fn_ty.args[idx];
-        idx += 1;
-        let llval = if arg.is_indirect() && bcx.sess().opts.debuginfo != FullDebugInfo {
-            // Don't copy an indirect argument to an alloca, the caller
-            // already put it in a temporary alloca and gave it up, unless
-            // we emit extra-debug-info, which requires local allocas :(.
-            // FIXME: lifetimes
-            if arg.pad.is_some() {
-                llarg_idx += 1;
-            }
-            let llarg = llvm::get_param(fcx.llfn, llarg_idx as c_uint);
-            llarg_idx += 1;
-            llarg
-        } else if !lvalue_locals.contains(local.index()) &&
-                  !arg.is_indirect() && arg.cast.is_none() &&
-                  arg_scope.is_none() {
-            if arg.is_ignore() {
-                return LocalRef::new_operand(bcx.ccx(), arg_ty);
-            }
-
-            // We don't have to cast or keep the argument in the alloca.
-            // FIXME(eddyb): We should figure out how to use llvm.dbg.value instead
-            // of putting everything in allocas just so we can use llvm.dbg.declare.
-            if arg.pad.is_some() {
-                llarg_idx += 1;
-            }
-            let llarg = llvm::get_param(fcx.llfn, llarg_idx as c_uint);
-            llarg_idx += 1;
-            let val = if common::type_is_fat_ptr(tcx, arg_ty) {
-                let meta = &fcx.fn_ty.args[idx];
-                idx += 1;
-                assert_eq!((meta.cast, meta.pad), (None, None));
-                let llmeta = llvm::get_param(fcx.llfn, llarg_idx as c_uint);
-                llarg_idx += 1;
-                OperandValue::Pair(llarg, llmeta)
-            } else {
-                OperandValue::Immediate(llarg)
-            };
-            let operand = OperandRef {
-                val: val,
-                ty: arg_ty
-            };
-            return LocalRef::Operand(Some(operand.unpack_if_pair(bcx)));
-        } else {
-            let lltemp = bcx.with_block(|bcx| {
-                base::alloc_ty(bcx, arg_ty, &format!("arg{}", arg_index))
-            });
-            if common::type_is_fat_ptr(tcx, arg_ty) {
-                // we pass fat pointers as two words, but we want to
-                // represent them internally as a pointer to two words,
-                // so make an alloca to store them in.
-                let meta = &fcx.fn_ty.args[idx];
-                idx += 1;
-                arg.store_fn_arg(bcx, &mut llarg_idx,
-                                 base::get_dataptr_builder(bcx, lltemp));
-                meta.store_fn_arg(bcx, &mut llarg_idx,
-                                  base::get_meta_builder(bcx, lltemp));
-            } else  {
-                // otherwise, arg is passed by value, so make a
-                // temporary and store it there
-                arg.store_fn_arg(bcx, &mut llarg_idx, lltemp);
-            }
-            lltemp
-        };
-        bcx.with_block(|bcx| arg_scope.map(|scope| {
-            // Is this a regular argument?
-            if arg_index > 0 || mir.upvar_decls.is_empty() {
-                declare_local(bcx, arg_decl.name.unwrap_or(keywords::Invalid.name()), arg_ty,
-                              scope, VariableAccess::DirectVariable { alloca: llval },
-                              VariableKind::ArgumentVariable(arg_index + 1),
-                              bcx.fcx().span.unwrap_or(DUMMY_SP));
-                return;
-            }
-
-            // Or is it the closure environment?
-            let (closure_ty, env_ref) = if let ty::TyRef(_, mt) = arg_ty.sty {
-                (mt.ty, true)
-            } else {
-                (arg_ty, false)
-            };
-            let upvar_tys = if let ty::TyClosure(def_id, substs) = closure_ty.sty {
-                substs.upvar_tys(def_id, tcx)
-            } else {
-                bug!("upvar_decls with non-closure arg0 type `{}`", closure_ty);
-            };
-
-            // Store the pointer to closure data in an alloca for debuginfo
-            // because that's what the llvm.dbg.declare intrinsic expects.
-
-            // FIXME(eddyb) this shouldn't be necessary but SROA seems to
-            // mishandle DW_OP_plus not preceded by DW_OP_deref, i.e. it
-            // doesn't actually strip the offset when splitting the closure
-            // environment into its components so it ends up out of bounds.
-            let env_ptr = if !env_ref {
-                use base::*;
-                use build::*;
-                use common::*;
-                let alloc = alloca(bcx, val_ty(llval), "__debuginfo_env_ptr");
-                Store(bcx, llval, alloc);
-                alloc
-            } else {
-                llval
-            };
-
-            let llclosurety = type_of::type_of(bcx.ccx(), closure_ty);
-            for (i, (decl, ty)) in mir.upvar_decls.iter().zip(upvar_tys).enumerate() {
-                let byte_offset_of_var_in_env =
-                    machine::llelement_offset(bcx.ccx(), llclosurety, i);
-
-                let ops = unsafe {
-                    [llvm::LLVMRustDIBuilderCreateOpDeref(),
-                     llvm::LLVMRustDIBuilderCreateOpPlus(),
-                     byte_offset_of_var_in_env as i64,
-                     llvm::LLVMRustDIBuilderCreateOpDeref()]
-                };
-
-                // The environment and the capture can each be indirect.
-
-                // FIXME(eddyb) see above why we have to keep
-                // a pointer in an alloca for debuginfo atm.
-                let mut ops = if env_ref || true { &ops[..] } else { &ops[1..] };
-
-                let ty = if let (true, &ty::TyRef(_, mt)) = (decl.by_ref, &ty.sty) {
-                    mt.ty
-                } else {
-                    ops = &ops[..ops.len() - 1];
-                    ty
-                };
-
-                let variable_access = VariableAccess::IndirectVariable {
-                    alloca: env_ptr,
-                    address_operations: &ops
-                };
-                declare_local(bcx, decl.debug_name, ty, scope, variable_access,
-                              VariableKind::CapturedVariable,
-                              bcx.fcx().span.unwrap_or(DUMMY_SP));
-            }
-        }));
-        LocalRef::Lvalue(LvalueRef::new_sized(llval, LvalueTy::from_ty(arg_ty)))
-    }).collect()
-
-    */
+        let arg_ty = fcx.monomorphize(&arg_decl.ty);
+    }).collect::<Vec<_>>();
 
     Vec::new()
 }

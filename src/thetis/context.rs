@@ -29,7 +29,7 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
     translation_items: RefCell<FxHashSet<TransItem<'tcx>>>,
     trait_cache: RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>>,
     project_cache: RefCell<DepTrackingMap<ProjectionCache<'tcx>>>,
-    builder: ModuleBuilder,
+    builder: RefCell<ModuleBuilder>,
 }
 
 impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
@@ -49,7 +49,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
             translation_items: RefCell::new(FxHashSet()),
             trait_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
             project_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
-            builder: builder,
+            builder: RefCell::new(builder),
         }
     }
 
@@ -117,6 +117,10 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
     pub fn sess<'a>(&'a self) -> &'a Session {
         &self.shared.tcx.sess
+    }
+
+    pub fn spv<'a>(&'a self) -> &'a RefCell<ModuleBuilder> {
+        &self.shared.builder
     }
 }
 
