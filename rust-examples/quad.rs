@@ -1,6 +1,7 @@
 #![feature(custom_attribute, attr_literals)]
 #![allow(unused_attributes)]
 
+/*
 struct QuadVertex {
     #[inspirv(location = 0)] pos: Float4,
     #[inspirv(location = 1)] color: Float4,
@@ -42,5 +43,24 @@ fn fragment(varying: Attributes<QuadVarying>, fragment: Attributes<QuadFragment>
             fragment.coord.x / w,
             fragment.coord.y / h,
             0.0, 1.0),
+    }
+}
+*/
+
+extern crate test_lib;
+
+struct QuadVertex {
+    #[inspirv(location = 1)] color: Float4,
+}
+
+struct QuadVarying {
+}
+
+#[inspirv(entry_point = "vertex")]
+fn vertex() -> QuadVarying {
+    use test_lib::Foo;
+    let x = 0u32;
+    x.foo();
+    QuadVarying {
     }
 }

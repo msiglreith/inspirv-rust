@@ -1,41 +1,3 @@
-#![feature(
-    box_syntax,
-    box_patterns,
-    custom_attribute,
-    rustc_private,
-    slice_patterns,
-    cell_extras,
-)]
-
-#![feature(plugin)]
-// #![plugin(clippy)]
-
-#[macro_use]
-extern crate rustc;
-extern crate rustc_borrowck;
-extern crate rustc_mir;
-extern crate rustc_errors;
-extern crate rustc_back;
-extern crate syntax;
-extern crate rustc_const_math;
-extern crate rustc_data_structures;
-extern crate rustc_passes;
-extern crate syntax_pos;
-extern crate rustc_trans;
-extern crate rustc_incremental;
-extern crate rustc_const_eval;
-
-extern crate arena;
-extern crate libc;
-
-#[macro_use]
-extern crate log;
-extern crate env_logger;
-
-extern crate inspirv;
-extern crate inspirv_builder;
-
-extern crate petgraph;
 
 use arena::TypedArena;
 use rustc_borrowck as borrowck;
@@ -65,6 +27,7 @@ use rustc::util::common::time;
 use rustc_trans::back::{link, archive};
 use rustc_back::tempdir::TempDir;
 use rustc_data_structures::indexed_vec::IndexVec;
+use rustc_mir;
 use rustc_passes::{mir_stats};
 use rustc_trans::util::nodemap::NodeSet;
 use rustc_const_eval::ConstEvalErr;
@@ -73,8 +36,10 @@ use syntax_pos::{DUMMY_SP, NO_EXPANSION, COMMAND_LINE_EXPN, BytePos};
 use syntax::attr;
 use syntax::ast::{self, NodeId};
 
+use inspirv;
 use inspirv::types::{Id, LiteralInteger};
 use inspirv::core::enumeration::*;
+use inspirv_builder;
 use inspirv_builder::function::{Function, FuncId};
 use inspirv_builder::module::{ModuleBuilder, Type};
 
@@ -1061,4 +1026,3 @@ mod rvalue;
 mod statement;
 mod trans_item;
 mod type_of;
-
