@@ -26,6 +26,9 @@ impl SpvType {
             _ => None,
         }
     }
+    pub fn expect_no_ref(self) -> Type {
+        self.no_ref().expect("Unexpected reference type")
+    }
 
     pub fn ty(&self) -> &Type {
         match *self {

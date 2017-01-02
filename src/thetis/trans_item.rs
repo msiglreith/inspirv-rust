@@ -6,15 +6,21 @@ use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::hir::map::DefPathData;
 use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::TypeFoldable;
 use rustc::ty::subst::Substs;
 use syntax::ast::{self, NodeId};
+use inspirv::core::enumeration::*;
+use inspirv_builder::function::Function;
+use inspirv_builder::module::{Type};
 use super::monomorphize::{self, Instance};
 use super::context::{CrateContext, SharedCrateContext};
 use super::{FunctionContext};
 use super::{trans_function, trans_static};
+use super::type_of;
 
 use std::fmt::Write;
 use std::iter;
+use std::cell::RefCell;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum TransItem<'tcx> {
@@ -24,7 +30,37 @@ pub enum TransItem<'tcx> {
 
 impl<'a, 'tcx> TransItem<'tcx> {
     pub fn predefine(&self, ccx: &CrateContext<'a, 'tcx>) {
-        // TODO:
+        match *self {
+            TransItem::Static(node_id) => {
+                let def_id = ccx.tcx().map.local_def_id(node_id);
+                let ty = ccx.tcx().item_type(def_id);
+                let spv_ty = type_of::spv_type_of(ccx, ty);
+
+                /*
+                let g = declare::define_global(ccx, symbol_name, llty).unwrap_or_else(|| {
+                    ccx.sess().span_fatal(ccx.tcx().map.span(node_id),
+                        &format!("symbol `{}` is already defined", symbol_name))
+                });
+
+                unsafe { llvm::LLVMRustSetLinkage(g, linkage) };
+
+                let instance = Instance::mono(ccx.shared(), def_id);
+                ccx.instances().borrow_mut().insert(instance, g);
+                */
+            }
+            TransItem::Fn(instance) => {
+                assert!(!instance.substs.needs_infer() &&
+                !instance.substs.has_param_types());
+
+                let item_ty = ccx.tcx().item_type(instance.def);
+                let item_ty = ccx.tcx().erase_regions(&item_ty);
+                let mono_ty = monomorphize::apply_param_substs(ccx.shared(), instance.substs, &item_ty);
+
+                let spv_fn = ccx.spv().borrow_mut().define_function_named(&instance.symbol_name(ccx.shared()));
+
+                ccx.instances().borrow_mut().insert(instance, spv_fn.id);
+            }
+        }
     }
 
     pub fn define(&self, ccx: &CrateContext<'a, 'tcx>) {
@@ -345,20 +381,29 @@ pub fn is_closure(tcx: TyCtxt, def_id: DefId) -> bool {
 }
 
 pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance<'tcx>) {
-    // this is an info! to allow collecting monomorphization statistics
-    info!("trans_instance({})", instance);
-
-    // let _icx = push_ctxt("trans_instance");
+    println!("trans_instance({})", instance);
 
     let fn_ty = ccx.tcx().item_type(instance.def);
     let fn_ty = ccx.tcx().erase_regions(&fn_ty);
     let fn_ty = monomorphize::apply_param_substs(ccx.shared(), instance.substs, &fn_ty);
 
-    // ccx.stats().n_closures.set(ccx.stats().n_closures.get() + 1);
+    let spv_fn_decl = match ccx.instances().borrow().get(&instance) {
+        Some(&id) => Function {
+            id: id,
+            params: Vec::new(),
+            ret_ty: Type::Void, // Temp value only
+            interfaces: Vec::new(),
+            variables: Vec::new(),
+            control: FunctionControlNone,
+            blocks: Vec::new(),
+        },
+        None => bug!("Instance `{:?}` not already declared", instance)
+    };
 
-    let (arena, fcx): (TypedArena<_>, FunctionContext);
+    let (arena, mut fcx): (TypedArena<_>, FunctionContext);
     arena = TypedArena::new();
     fcx = FunctionContext::new(ccx,
+                               spv_fn_decl,
                                Some(instance),
                                &arena);
 
@@ -366,5 +411,7 @@ pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance
         bug!("attempted translation of `{}` w/o MIR", instance);
     }
 
-    trans_function(&fcx);
+    if trans_function(&fcx) {
+        fcx.spv().borrow_mut().push_function(fcx.spv_fn_decl.borrow_mut().clone()); // hmm.. clone ..
+    }
 }

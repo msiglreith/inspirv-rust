@@ -16,7 +16,7 @@ extern crate syntax_pos;
 extern crate serialize;
 extern crate rustc_incremental;
 
-use inspirv_rust::trans;
+// use inspirv_rust::trans;
 use rustc_trans::back::link;
 use rustc::dep_graph::DepGraph;
 use rustc::session::{Session, build_session, early_error};

@@ -37,11 +37,11 @@ extern crate inspirv_builder;
 
 extern crate petgraph;
 
-pub mod error;
-pub mod trans;
-mod attribute;
-mod intrinsic;
-mod monomorphize;
-mod traits;
+// pub mod error;
+// pub mod trans;
+// mod attribute;
+// mod intrinsic;
+// mod monomorphize;
+// mod traits;
 
 pub mod thetis;

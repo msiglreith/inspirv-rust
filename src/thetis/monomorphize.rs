@@ -29,6 +29,30 @@ impl<'tcx> Instance<'tcx> {
     pub fn mono<'a>(scx: &SharedCrateContext<'a, 'tcx>, def_id: DefId) -> Instance<'tcx> {
         Instance::new(def_id, scx.empty_substs_for_def_id(def_id))
     }
+
+    pub fn symbol_name<'a>(self, scx: &SharedCrateContext<'a, 'tcx>) -> String {
+        let Instance { def: def_id, substs } = self;
+
+        debug!("symbol_name(def_id={:?}, substs={:?})",
+               def_id, substs);
+
+        let node_id = scx.tcx().map.as_local_node_id(def_id);
+
+        if let Some(id) = node_id {
+            if scx.sess().plugin_registrar_fn.get() == Some(id) {
+                let svh = &scx.link_meta().crate_hash;
+                let idx = def_id.index;
+                return scx.sess().generate_plugin_registrar_symbol(svh, idx);
+            }
+            if scx.sess().derive_registrar_fn.get() == Some(id) {
+                let svh = &scx.link_meta().crate_hash;
+                let idx = def_id.index;
+                return scx.sess().generate_derive_registrar_symbol(svh, idx);
+            }
+        }
+
+        return scx.tcx().item_name(def_id).as_str().to_string();
+    }
 }
 
 /// Monomorphizes a type from the AST by first applying the in-scope

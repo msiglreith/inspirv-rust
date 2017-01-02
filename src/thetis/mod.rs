@@ -22,8 +22,10 @@ use rustc::ty::adjustment::CustomCoerceUnsized;
 use rustc_incremental::IncrementalHashesMap;
 use rustc::session::Session;
 use rustc::session::config::{self, NoDebugInfo};
+use rustc::session::search_paths::PathKind;
 use rustc::util::common::time;
-use rustc_trans::back::link;
+use rustc_trans::back::{link, archive};
+use rustc_back::tempdir::TempDir;
 use rustc_data_structures::indexed_vec::IndexVec;
 use rustc_mir;
 use rustc_passes::{mir_stats};
@@ -34,8 +36,11 @@ use syntax_pos::{DUMMY_SP, NO_EXPANSION, COMMAND_LINE_EXPN, BytePos};
 use syntax::attr;
 use syntax::ast::{self, NodeId};
 
+use inspirv;
 use inspirv::types::{Id, LiteralInteger};
 use inspirv::core::enumeration::*;
+use inspirv_builder;
+use inspirv_builder::function::{Function, FuncId};
 use inspirv_builder::module::{ModuleBuilder, Type};
 
 use self::attributes::Attribute;
@@ -50,6 +55,9 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::iter;
+use std::fs::File;
+use std::env;
+use std::io::Write;
 
 // A lot of the code here is ported from the rustc LLVM translator
 
@@ -88,6 +96,8 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 
     pub def_id: Option<DefId>,
 
+    pub spv_fn_decl: RefCell<Function>,
+
     // If this function is being monomorphized, this contains the type
     // substitutions used.
     pub param_substs: &'tcx Substs<'tcx>,
@@ -106,6 +116,7 @@ pub struct FunctionContext<'a, 'tcx: 'a> {
 impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
     /// Create a function context for the given function.
     pub fn new(ccx: &'a CrateContext<'a, 'tcx>,
+               spv_fn_decl: Function,
                definition: Option<Instance<'tcx>>,
                block_arena: &'a TypedArena<BlockS<'a, 'tcx>>)
                -> FunctionContext<'a, 'tcx> {
@@ -122,6 +133,7 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         FunctionContext {
             mir: mir,
             def_id: def_id,
+            spv_fn_decl: RefCell::new(spv_fn_decl),
             param_substs: param_substs,
             span: None,
             block_arena: block_arena,
@@ -143,10 +155,6 @@ impl<'a, 'tcx> FunctionContext<'a, 'tcx> {
         } else {
             Vec::new()
         }
-    }
-
-    pub fn new_block(&'a self) -> Block<'a, 'tcx> {
-        BlockS::new(self)
     }
 
     pub fn monomorphize<T>(&self, value: &T) -> T
@@ -181,13 +189,17 @@ pub struct BlockS<'blk, 'tcx: 'blk> {
     // The function context for the function to which this block is
     // attached.
     pub fcx: &'blk FunctionContext<'blk, 'tcx>,
+
+    pub spv_block: inspirv_builder::Block,
 }
 
 impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
-    pub fn new(fcx: &'blk FunctionContext<'blk, 'tcx>)
+    pub fn new(fcx: &'blk FunctionContext<'blk, 'tcx>,
+               block: inspirv_builder::Block)
                -> Block<'blk, 'tcx> {
         fcx.block_arena.alloc(BlockS {
-            fcx: fcx
+            fcx: fcx,
+            spv_block: block,
         })
     }
 
@@ -203,7 +215,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
     pub fn sess(&self) -> &'blk Session {
         self.fcx.ccx.sess()
     }
-    pub fn spv<'a>(&'a self) -> &'a RefCell<ModuleBuilder> {
+    pub fn spv<'b>(&'b self) -> &'b RefCell<ModuleBuilder> {
         self.fcx.spv()
     }
 
@@ -262,8 +274,9 @@ impl<'blk, 'tcx> BlockAndBuilder<'blk, 'tcx> {
     }
 }
 
-pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) {
+pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) -> bool {
     let fn_attrs = fcx.attributes();
+
     println!("{:?}", fn_attrs);
 
     // We don't translate builtin functions, these will be handled internally
@@ -271,7 +284,7 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
         Attribute::CompilerBuiltin | Attribute::Intrinsic(..) => true,
         _ => false
     }) {
-        return;
+        return false;
     }
 
     let mir = fcx.mir();
@@ -279,7 +292,17 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
 
     // Allocate a `Block` for every basic block
     let block_bcxs: IndexVec<mir::BasicBlock, Block<'blk,'tcx>> =
-        mir.basic_blocks().indices().map(|_| fcx.new_block()).collect();
+        mir.basic_blocks().indices().map(|_| {
+            let mut builder = fcx.spv().borrow_mut();
+            let label = builder.alloc_id();
+            let block = inspirv_builder::Block {
+                label: label,
+                branch_instr: None,
+                cfg_structure: None,
+                instructions: Vec::new(),
+            };
+            BlockS::new(fcx, block)
+        }).collect();
 
     let mut mircx = MirContext {
         mir: Ref::clone(&mir),
@@ -295,6 +318,9 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
     });
 
     mircx.locals = {
+        // Collecting entry point interfaces
+        let mut interface_ids = Vec::new();
+
         let args = mir.args_iter().map(|local| {
             let mut builder = fcx.spv().borrow_mut();
             let decl = &mir.local_decls[local];
@@ -322,7 +348,7 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
                             if let ty::TyAdt(adt, subs) = struct_ty.sty {
                                 let struct_ty_did = struct_ty.ty_to_def_id().unwrap();
                                 let interfaces = adt.struct_variant().fields.iter().map(|field| {
-                                    let ty = type_of::spv_type_of(fcx.ccx, field.ty(tcx, subs)).no_ref().unwrap();
+                                    let ty = type_of::spv_type_of(fcx.ccx, field.ty(tcx, subs)).expect_no_ref();
                                     let name = format!("{}_{}", tcx.item_name(struct_ty_did).as_str(), field.name.as_str());
 
                                     let id = builder.define_variable(name.as_str(), ty.clone(),
@@ -342,6 +368,7 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
                                         }
                                     }
 
+                                    interface_ids.push(id);
                                     Local {
                                         id: id,
                                         ty: ty,
@@ -351,12 +378,58 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
                             }
                         }
 
-                        bug!("Input argument inner type needs to be a struct type")
+                        bug!("Input argument type needs to be a struct type")
                     } else if const_buffer {
-                        unimplemented!()
+                        if let ty::TyAdt(adt, subs) = ty.sty {
+                            // unwrap wrapper type
+                            let struct_ty = adt.struct_variant().fields[0].ty(tcx, subs);
+                            let struct_ty_did = struct_ty.ty_to_def_id().unwrap();
+                            if let ty::TyAdt(adt, _) = struct_ty.sty {
+                                let ty = type_of::spv_type_of(fcx.ccx, struct_ty).expect_no_ref();
+                                let ty_id = builder.define_named_type(&ty, &*tcx.item_name(struct_ty_did).as_str());
+                                let name = decl.name.map(|name| (&*name.as_str()).to_owned()).unwrap_or("_".to_owned());
+                                let id = builder.define_variable(&*name, ty.clone(), StorageClass::StorageClassUniform);  
+                                
+                                // self.arg_ids.push(Some(FuncArg::ConstBuffer((id, SpirvType::NoRef(ty.clone())))));
+
+                                builder.add_decoration(ty_id, Decoration::DecorationBlock);
+                                for (member, field) in adt.struct_variant().fields.iter().enumerate() {
+                                    builder.name_id_member(ty_id, member as u32, &*field.name.as_str());
+                                }
+
+                                let fields = if let Type::Struct(fields) = ty { fields } else { bug!("cbuffer not a struct!") };
+                                let mut offset = 0;
+                                for (member, field) in fields.iter().enumerate() {
+                                    let unalignment = offset % field.alignment();
+                                    if unalignment != 0 {
+                                        offset += field.alignment() - unalignment;
+                                    }
+
+                                    builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationOffset(LiteralInteger(offset as u32)));
+                                    offset += field.size_of();
+
+                                    // Matrix types require ColMajor/RowMajor decorations and MatrixStride [SPIR-V 2.16.2]
+                                    if let Type::Matrix { ref base, rows, .. } = *field {
+                                        let stride = Type::Vector { base: base.clone(), components: rows }.size_of();
+                                        builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationMatrixStride(LiteralInteger(stride as u32)));
+                                        builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationColMajor);
+                                    }
+                                }
+
+                                let attrs = attributes::attributes(fcx.ccx, struct_ty_did);
+                                for attr in attrs {
+                                    if let Attribute::Descriptor { set, binding } = attr {
+                                        builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
+                                        builder.add_decoration(id, Decoration::DecorationBinding(LiteralInteger(binding as u32)));
+                                    }
+                                }
+
+                            }
+                        }
+                        bug!("Const buffer argument type requires to be struct type")
                     }
 
-                    unimplemented!()
+                    bug!()
                 } else {
                     bug!()
                 }
@@ -367,9 +440,7 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
 
                 Some(LocalRef::from(spv_id, spv_ty))
             }
-        });
-
-        println!("arguments: {:?}", args.collect::<Vec<_>>());
+        }).collect::<IndexVec<mir::Local, _>>();
 
         let vars_and_temps = mir.vars_and_temps_iter().map(|local| {
             let mut builder = fcx.spv().borrow_mut();
@@ -392,22 +463,93 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
                 // TODO 
                 Some(LocalRef::from(spv_id, spv_ty))
             }
-        });
-
-        println!("vars and temps: {:?}", vars_and_temps.collect::<Vec<_>>());
+        }).collect::<IndexVec<mir::Local, _>>();
 
         let ret = {
-            let decl = &mir.local_decls[mir::RETURN_POINTER];
-            let ty = fcx.monomorphize(&decl.ty);
+            let mut ret = || {
+                let mut builder = fcx.spv().borrow_mut();
+                let decl = &mir.local_decls[mir::RETURN_POINTER];
+                let ty = fcx.monomorphize(&decl.ty);
 
-            debug!("alloc: {:?} (return pointer) -> lvalue", mir::RETURN_POINTER);
-            unimplemented!()
+                debug!("alloc: {:?} (return pointer) -> lvalue", mir::RETURN_POINTER);
+                
+                if entry_point.is_some() {
+                    match ty.sty {
+                        ty::TyAdt(adt, subs) => {
+                            let ty_id = ty.ty_to_def_id().unwrap();
+                            let interfaces = adt.struct_variant().fields.iter().map(|field| {
+                                let ty = type_of::spv_type_of(fcx.ccx, field.ty(tcx, subs)).expect_no_ref();
+                                let name = format!("{}_{}", &*tcx.item_name(ty_id).as_str(), field.name.as_str());
+                                let id = builder.define_variable(name.as_str(), ty.clone(),
+                                                             StorageClass::StorageClassOutput);
+
+                                let field_attrs = attributes::struct_field_attributes(fcx.ccx, ty_id, field.did);
+                                println!("{:?}", tcx.map.as_local_node_id(field.did));
+                                let mut attribute_loc = None;
+                                for attr in field_attrs {
+                                    match attr {
+                                        Attribute::Location { location } => { attribute_loc = Some(location); }
+                                        // Rust doesn't allow attributes associated with `type foo = bar` /:
+                                        Attribute::Builtin { builtin } => {
+                                            // TODO: check if our decorations follow Vulkan specs e.g. Position only for float4
+                                            builder.add_decoration(id, Decoration::DecorationBuiltIn(builtin));
+                                        }
+                                        _ => ()
+                                    }
+                                }
+
+                                if let Some(location) = attribute_loc {
+                                    builder.add_decoration(id, Decoration::DecorationLocation(LiteralInteger(location as u32)));
+                                } else {
+                                    bug!("Output argument type field requires a location attribute");
+                                }
+
+                                interface_ids.push(id);
+                                Local {
+                                    id: id,
+                                    ty: ty,
+                                }
+                            }).collect::<Vec<_>>();
+
+                            return Some(LocalRef::Interface(interfaces))
+                        }
+                        ty::TyTuple(tys) if tys.is_empty() => {
+                            // MIR doesn't use TyVoid for ()
+                            return None;
+                        }
+                        _ => {}
+                    }
+
+                    bug!("Output argument type requires to be a struct type")
+                } else {
+                    let spv_id = builder.alloc_id();
+                    let spv_ty = SpvType::NoRef(type_of::spv_type_of(fcx.ccx, ty)
+                                    .expect_no_ref());
+
+                    Some(LocalRef::from(spv_id, spv_ty))
+                }
+            };
+
+            ret()
         };
 
+        if let Some(&Attribute::EntryPoint{ stage, ref execution_modes }) = entry_point {
+            let mut execution_modes = execution_modes.clone();
+            if stage == ExecutionModel::ExecutionModelFragment {
+                execution_modes.insert(ExecutionModeKind::ExecutionModeOriginUpperLeft, ExecutionMode::ExecutionModeOriginUpperLeft);
+            }
+
+            let mut fn_def = fcx.spv_fn_decl.borrow_mut();
+
+            // TODO: rather use the symbol name and avoid the allocations
+            let fn_name = fcx.def_id.map(|def_id| (&*fcx.ccx.tcx().item_name(def_id).as_str()).to_string()).unwrap_or(String::new());
+            fcx.spv().borrow_mut().define_entry_point(fn_def.id, &fn_name, stage, execution_modes, interface_ids);
+        }
+
         iter::once(ret)
-            .chain(args)
-            .chain(vars_and_temps)
-            .collect()
+           .chain(args)
+           .chain(vars_and_temps)
+           .collect()
     };
 
     let mut rpo = traversal::reverse_postorder(&mir);
@@ -416,20 +558,8 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
     for (bb, _) in rpo {
         mircx.trans_block(bb);
     }
-}
 
-fn arg_local_refs<'bcx, 'tcx>(fcx: &FunctionContext<'bcx, 'tcx>,
-                              mir: &mir::Mir<'tcx>)
-                              -> Vec<Option<LocalRef>> {
-    let tcx = fcx.ccx.tcx();
-    let mut idx = 0;
-
-    mir.args_iter().map(|local| {
-        let arg_decl = &mir.local_decls[local];
-        let arg_ty = fcx.monomorphize(&arg_decl.ty);
-    }).collect::<Vec<_>>();
-
-    Vec::new()
+    true
 }
 
 pub fn trans_static(ccx: &CrateContext,
@@ -662,19 +792,120 @@ fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         write_metadata(&shared_ccx, shared_ccx.exported_symbols())
     });
 
-    // Run the translation item collector
-    let translation_items = collect_translation_items(&shared_ccx);
-
-    let ccx = CrateContext::new(&shared_ccx);
-
-    for item in &translation_items {
-        item.predefine(&ccx);
+    let mut need_trans = false;
+    for crate_type in tcx.sess.crate_types.borrow().iter() {
+        if let config::CrateTypeStaticlib = *crate_type {
+            need_trans = true;
+        }
     }
 
-    // translate MIR
-    for item in translation_items {
-        println!("{:?}", item.to_string(tcx));
-        item.define(&ccx);
+    if need_trans {
+        // Run the translation item collector
+        let translation_items = collect_translation_items(&shared_ccx);
+
+        let ccx = CrateContext::new(&shared_ccx);
+
+        for item in &translation_items {
+            item.predefine(&ccx);
+        }
+
+        // translate MIR
+        for item in translation_items {
+            println!("{:?}", item.to_string(tcx));
+            item.define(&ccx);
+        }
+    }
+
+    // Output artifacts
+    for crate_type in tcx.sess.crate_types.borrow().iter() {
+        match *crate_type {
+            config::CrateTypeRlib => {
+                let filename = format!("lib{}.rlib", name);
+                let ofile = Path::new(&filename);
+                let out_path = if let Some(out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
+                println!("{:?}", ofile);
+                let cmd_path = {
+                    let mut new_path = tcx.sess.host_filesearch(PathKind::All)
+                           .get_tools_search_paths();
+                    if let Some(path) = env::var_os("PATH") {
+                        new_path.extend(env::split_paths(&path));
+                    }
+                    env::join_paths(new_path).unwrap()
+                };
+
+                let archive_config = archive::ArchiveConfig {
+                    sess: tcx.sess,
+                    dst: out_path.to_path_buf(),
+                    src: None,
+                    lib_search_paths: Vec::new(),
+                    ar_prog: link::get_ar_prog(tcx.sess),
+                    command_path: cmd_path,
+                };
+
+                let mut ab = archive::ArchiveBuilder::new(archive_config);
+
+                let tmpdir = match TempDir::new("rustc") {
+                    Ok(tmpdir) => tmpdir,
+                    Err(err) => bug!("couldn't create a temp dir: {}", err),
+                };
+
+                // Instead of putting the metadata in an object file section, rlibs
+                // contain the metadata in a separate file. We use a temp directory
+                // here so concurrent builds in the same directory don't try to use
+                // the same filename for metadata (stomping over one another)
+                let metadata_file = tmpdir.path().join(tcx.sess.cstore.metadata_filename());
+                match File::create(&metadata_file).and_then(|mut f| {
+                    f.write_all(&metadata)
+                }) {
+                    Ok(..) => {}
+                    Err(e) => {
+                        tcx.sess.fatal(&format!("failed to write {}: {}",
+                                            metadata_file.display(), e));
+                    }
+                }
+                ab.add_file(&metadata_file);
+                ab.build();
+            }
+
+            config::CrateTypeMetadata => {
+                let filename = format!("lib{}.rmeta", name);
+                let ofile = Path::new(&filename);
+                let out_path = if let Some(out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
+                println!("{:?}", ofile);
+
+                let result = File::create(&out_path).and_then(|mut f| f.write_all(&metadata));
+                if let Err(e) = result {
+                    tcx.sess.fatal(&format!("failed to write {}: {}", out_path.display(), e));
+                }
+            }
+            
+            config::CrateTypeStaticlib => {
+                // Static libraries are compiled to spv modules
+                // These are easier to handle than using the executable type
+                let filename = format!("{}.spv", name);
+                let ofile = Path::new(&filename);
+                let out_path = if let Some(out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
+                println!("{:?}", ofile);
+                let file = File::create(&out_path).unwrap();
+
+                match shared_ccx.spv().borrow_mut().build() {
+                    Ok(mut module) => module.export_binary(file).unwrap(),
+                    Err(err) => {
+                        println!("{:?}", err);
+                        return;
+                    }
+                }
+
+                // DEBUG: print the exported module
+                let file = File::open(&out_path).unwrap();
+                let mut reader = inspirv::read_binary::ReaderBinary::new(file).unwrap();
+
+                while let Some(instr) = reader.read_instruction().unwrap() {
+                    println!("{:?}", instr);
+                }
+            }
+            _ => { bug!("wrong crate type {}", crate_type); }
+        }
     }
 }
 
@@ -793,6 +1024,5 @@ mod monomorphize;
 mod operand;
 mod rvalue;
 mod statement;
-mod terminator;
 mod trans_item;
 mod type_of;

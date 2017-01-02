@@ -7,7 +7,7 @@ use super::lvalue::LvalueRef;
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     pub fn trans_rvalue(&mut self,
                         bcx: BlockAndBuilder<'bcx, 'tcx>,
-                        dest: LvalueRef<'tcx>,
+                        dest: LvalueRef,
                         rvalue: &mir::Rvalue<'tcx>)
                         -> BlockAndBuilder<'bcx, 'tcx>
     {

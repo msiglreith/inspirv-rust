@@ -3,7 +3,7 @@ use rustc::dep_graph::DepTrackingMap;
 use rustc::dep_graph::DepTrackingMapConfig;
 use rustc::dep_graph::DepNode;
 use rustc::ty::{self, Ty, TyCtxt};
-use rustc::util::nodemap::{FxHashSet, NodeSet};
+use rustc::util::nodemap::{FxHashMap, FxHashSet, NodeSet};
 use rustc::hir::def::ExportMap;
 use rustc::hir::def_id::DefId;
 use rustc::middle::cstore::LinkMeta;
@@ -15,9 +15,11 @@ use std::cell::RefCell;
 use std::marker::PhantomData;
 
 use inspirv::core::enumeration::*;
+use inspirv_builder::function::FuncId;
 use inspirv_builder::module::{ModuleBuilder};
 
 use super::trans_item::TransItem;
+use super::monomorphize::Instance;
 
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
 
@@ -30,6 +32,9 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
     trait_cache: RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>>,
     project_cache: RefCell<DepTrackingMap<ProjectionCache<'tcx>>>,
     builder: RefCell<ModuleBuilder>,
+
+    /// Cache instances of monomorphic and polymorphic items
+    instances: RefCell<FxHashMap<Instance<'tcx>, FuncId>>,
 }
 
 impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
@@ -50,6 +55,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
             trait_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
             project_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
             builder: RefCell::new(builder),
+            instances: RefCell::new(FxHashMap()),
         }
     }
 
@@ -75,6 +81,10 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
 
     pub fn sess<'a>(&'a self) -> &'a Session {
         &self.tcx.sess
+    }
+
+    pub fn spv<'a>(&'a self) -> &'a RefCell<ModuleBuilder> {
+        &self.builder
     }
 
     pub fn link_meta<'a>(&'a self) -> &'a LinkMeta {
@@ -121,6 +131,10 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
 
     pub fn spv<'a>(&'a self) -> &'a RefCell<ModuleBuilder> {
         &self.shared.builder
+    }
+
+    pub fn instances<'a>(&'a self) -> &'a RefCell<FxHashMap<Instance<'tcx>, FuncId>> {
+        &self.shared.instances
     }
 }
 
