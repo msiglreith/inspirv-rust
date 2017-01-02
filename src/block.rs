@@ -3,6 +3,10 @@ use super::{MirContext, BlockAndBuilder};
 
 use rustc::mir;
 
+use inspirv::core::instruction::*;
+use inspirv::core::enumeration::*;
+use inspirv::instruction::BranchInstruction;
+
 use std::cell::Ref as CellRef;
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
@@ -17,22 +21,27 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
         }
 
         let terminator = data.terminator();
-        self.trans_terminator(terminator);
-
-        bcx.with_block(|block| {
-            self.fcx.spv_fn_decl.borrow_mut().add_block(block.spv_block.clone()); // again.. clones!?..
-        })
-    }
-
-    pub fn trans_terminator(&mut self, terminator: &mir::Terminator<'tcx>) {
         println!("trans_block: terminator: {:?}", terminator);
 
         match terminator.kind {
             mir::TerminatorKind::Return => {
-                // self.block.branch_instr = Some(BranchInstruction::Return(OpReturn));
+                bcx.with_block(|block| {
+                    block.spv_block.borrow_mut().branch_instr = Some(BranchInstruction::Return(OpReturn));
+                });
             }
+
+            mir::TerminatorKind::Unreachable => {
+                bcx.with_block(|block| {
+                    block.spv_block.borrow_mut().branch_instr = Some(BranchInstruction::Unreachable(OpUnreachable));
+                });
+            }
+
             _ => unimplemented!(),
         }
+
+        bcx.with_block(|block| {
+            self.fcx.spv_fn_decl.borrow_mut().add_block(block.spv_block.borrow().clone()); // again.. clones!?..
+        })
     }
 
     fn bcx(&self, bb: mir::BasicBlock) -> BlockAndBuilder<'bcx, 'tcx> {

@@ -1,4 +1,3 @@
-
 use syntax_pos::MultiSpan;
 use rustc_errors::DiagnosticBuilder;
 pub use rustc_errors::Level;

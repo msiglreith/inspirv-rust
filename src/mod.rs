@@ -190,7 +190,7 @@ pub struct BlockS<'blk, 'tcx: 'blk> {
     // attached.
     pub fcx: &'blk FunctionContext<'blk, 'tcx>,
 
-    pub spv_block: inspirv_builder::Block,
+    pub spv_block: RefCell<inspirv_builder::Block>,
 }
 
 impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
@@ -199,7 +199,7 @@ impl<'blk, 'tcx> BlockS<'blk, 'tcx> {
                -> Block<'blk, 'tcx> {
         fcx.block_arena.alloc(BlockS {
             fcx: fcx,
-            spv_block: block,
+            spv_block: RefCell::new(block),
         })
     }
 

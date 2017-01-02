@@ -16,7 +16,6 @@ extern crate syntax_pos;
 extern crate serialize;
 extern crate rustc_incremental;
 
-// use inspirv_rust::trans;
 use rustc_trans::back::link;
 use rustc::dep_graph::DepGraph;
 use rustc::session::{Session, build_session, early_error};
@@ -38,8 +37,6 @@ use syntax::ast;
 use syntax::feature_gate::{GatedCfg, UnstableFeatures};
 use syntax::parse::{self, PResult};
 use syntax_pos::DUMMY_SP;
-
-use inspirv_rust::thetis;
 
 struct SpirvCompilerCalls;
 
@@ -176,8 +173,7 @@ impl<'a> CompilerCalls<'a> for SpirvCompilerCalls {
                 tcx.print_debug_stats();
             }
 
-            thetis::translate_to_spirv(tcx, state.analysis.unwrap().clone(), &incremental_hashes_map, &state.out_dir);
-            // trans::translate_to_spirv(&tcx, state.analysis.unwrap(), &state.out_dir);
+            inspirv_rust::translate_to_spirv(tcx, state.analysis.unwrap().clone(), &incremental_hashes_map, &state.out_dir);
 
             {
                 println!("Post-trans");
