@@ -7,8 +7,8 @@ use syntax::ast::{IntTy, UintTy, FloatTy};
 use inspirv::types::*;
 use inspirv_builder::Type;
 
-use super::context::CrateContext;
-use super::attributes::{self, Attribute};
+use context::CrateContext;
+use attributes::{self, Attribute};
 
 pub enum SpvType {
     NoRef(Type),

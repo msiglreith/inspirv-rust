@@ -26,13 +26,40 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
         match terminator.kind {
             mir::TerminatorKind::Return => {
                 bcx.with_block(|block| {
-                    block.spv_block.borrow_mut().branch_instr = Some(BranchInstruction::Return(OpReturn));
+                    block.spv_block.borrow_mut().branch_instr = Some(
+                        BranchInstruction::Return(OpReturn));
                 });
             }
 
             mir::TerminatorKind::Unreachable => {
                 bcx.with_block(|block| {
-                    block.spv_block.borrow_mut().branch_instr = Some(BranchInstruction::Unreachable(OpUnreachable));
+                    block.spv_block.borrow_mut().branch_instr = Some(
+                        BranchInstruction::Unreachable(OpUnreachable));
+                });
+            }
+
+            mir::TerminatorKind::Resume => {
+                bcx.with_block(|block| {
+                    block.spv_block.borrow_mut().branch_instr = Some(
+                        BranchInstruction::Return(OpReturn));
+                });
+            }
+
+            mir::TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
+                let callee = self.trans_operand(&bcx, func);
+                unimplemented!()
+            }
+
+            mir::TerminatorKind::Drop { target, .. } |
+            mir::TerminatorKind::Goto { target } |
+            mir::TerminatorKind::Assert { target, .. } => {
+                let target = {
+                    let target_bcx = self.bcx(target);
+                    bcx.with_block(|block| block.spv_block.borrow_mut().label)
+                };
+                bcx.with_block(|block| {
+                    block.spv_block.borrow_mut().branch_instr = Some(
+                        BranchInstruction::Branch(OpBranch(target)));
                 });
             }
 

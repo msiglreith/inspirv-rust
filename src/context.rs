@@ -18,8 +18,8 @@ use inspirv::core::enumeration::*;
 use inspirv_builder::function::FuncId;
 use inspirv_builder::module::{ModuleBuilder};
 
-use super::trans_item::TransItem;
-use super::monomorphize::Instance;
+use trans_item::TransItem;
+use monomorphize::Instance;
 
 const VERSION_INSPIRV_RUST: u32 = 0x00010000; // |major(1 byte)|minor(1 byte)|patch(2 byte)|
 

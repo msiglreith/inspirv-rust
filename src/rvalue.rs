@@ -1,8 +1,8 @@
 
 use rustc::mir;
 
-use super::{BlockAndBuilder, MirContext};
-use super::lvalue::LvalueRef;
+use {BlockAndBuilder, MirContext};
+use lvalue::LvalueRef;
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     pub fn trans_rvalue(&mut self,
@@ -15,11 +15,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
         match *rvalue {
            mir::Rvalue::Use(ref operand) => {
-               /*
-               let tr_operand = self.trans_operand(&bcx, operand);
-               self.store_operand(&bcx, dest.llval, tr_operand);
-               */
-               bcx
+                let tr_operand = self.trans_operand(&bcx, operand);
+                if let Some(tr_operand) = tr_operand {
+                    self.store_operand(&bcx, dest, tr_operand);
+                }
+                bcx
            }
 
             mir::Rvalue::Cast(mir::CastKind::Unsize, ref source, cast_ty) => {

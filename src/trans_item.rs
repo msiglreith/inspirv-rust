@@ -12,11 +12,11 @@ use syntax::ast::{self, NodeId};
 use inspirv::core::enumeration::*;
 use inspirv_builder::function::Function;
 use inspirv_builder::module::{Type};
-use super::monomorphize::{self, Instance};
-use super::context::{CrateContext, SharedCrateContext};
-use super::{FunctionContext};
-use super::{trans_function, trans_static};
-use super::type_of;
+use monomorphize::{self, Instance};
+use context::{CrateContext, SharedCrateContext};
+use {FunctionContext};
+use {trans_function, trans_static};
+use type_of;
 
 use std::fmt::Write;
 use std::iter;

@@ -6,45 +6,49 @@ use rustc::mir::tcx::LvalueTy;
 use inspirv::types::*;
 use inspirv_builder::module::{Type};
 
-use super::{BlockAndBuilder, MirContext, LocalRef};
+use {BlockAndBuilder, MirContext, LocalRef};
 
-pub enum LvalueRef {
-    Value(ValueRef),
-    Ref(ValueRef, Option<Id>),
-    SigStruct(Vec<ValueRef>),
+#[derive(Debug, Clone)]
+pub enum LvalueRef<'tcx> {
+    Value(ValueRef, LvalueTy<'tcx>),
+    Ref(ValueRef, Option<Id>, LvalueTy<'tcx>),
+    SigStruct(Vec<ValueRef>, LvalueTy<'tcx>),
     Ignore,
 }
 
-enum LvalueInner {
-    LvalueRef(LvalueRef),
+#[derive(Debug, Clone)]
+enum LvalueInner<'tcx> {
+    LvalueRef(LvalueRef<'tcx>),
     AccessChain,
 }
 
-pub struct ValueRef {
+#[derive(Debug, Clone)]
+pub struct ValueRef{
     pub spvid: Id,
 
     pub spvty: Type,
-
-    // Monomorphized type of this lvalue, including variant information
-    // pub ty: LvalueTy<'tcx>,
 }
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     fn revolve_lvalue(&mut self,
                       bcx: &BlockAndBuilder<'bcx, 'tcx>,
                       lvalue: &mir::Lvalue<'tcx>)
-                      -> LvalueInner {
+                      -> LvalueInner<'tcx> {
         let ccx = bcx.ccx();
         let tcx = bcx.tcx();
 
         let result = match *lvalue {
             mir::Lvalue::Local(index) => {
+                let ty = LvalueTy::from_ty(self.monomorphized_lvalue_ty(lvalue));
                 let lvalue_ref = match self.locals[index] {
                     Some(LocalRef::Local(ref local)) => {
-                        LvalueRef::Value(ValueRef {
-                            spvid: local.id,
-                            spvty: local.ty.clone(),
-                        })
+                        LvalueRef::Value(
+                            ValueRef {
+                                spvid: local.id,
+                                spvty: local.ty.clone(),
+                            },
+                            ty,
+                        )
                     }
                     Some(LocalRef::Ref { ref local, referent }) => {
                         LvalueRef::Ref(
@@ -52,11 +56,20 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                                 spvid: local.id,
                                 spvty: local.ty.clone(),
                             },
-                            referent
+                            referent,
+                            ty,
                         )
                     }
                     Some(LocalRef::Interface(ref locals)) => {
-                        unimplemented!()
+                        LvalueRef::SigStruct(
+                            locals.iter().map(|local| {
+                                ValueRef {
+                                    spvid: local.id,
+                                    spvty: local.ty.clone(),
+                                }
+                            }).collect(),
+                            ty,
+                        )
                     }
                     None => LvalueRef::Ignore,
                 };
@@ -78,7 +91,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     pub fn trans_lvalue(&mut self,
                         bcx: &BlockAndBuilder<'bcx, 'tcx>,
                         lvalue: &mir::Lvalue<'tcx>)
-                        -> LvalueRef {
+                        -> LvalueRef<'tcx> {
         println!("trans_lvalue(lvalue={:?})", lvalue);
 
         let inner = self.revolve_lvalue(bcx, lvalue);
