@@ -1,6 +1,6 @@
 
-use super::{MirContext, BlockAndBuilder};
-use super::adt;
+use {MirContext, BlockAndBuilder};
+use adt;
 
 use rustc::mir;
 use rustc_trans::Disr;

@@ -7,9 +7,9 @@ use syntax;
 use syntax::ast::{LitKind, LitIntType, MetaItemKind, NestedMetaItemKind};
 use syntax::symbol::InternedString;
 use inspirv::core::enumeration::*;
-use super::intrinsic::Intrinsic;
-use super::error::{PResult, DiagnosticBuilderExt};
-use super::context::CrateContext;
+use intrinsic::Intrinsic;
+use error::{PResult, DiagnosticBuilderExt};
+use context::CrateContext;
 
 #[derive(Clone, Debug)]
 pub enum Attribute {

@@ -2,7 +2,8 @@
 use rustc::mir;
 use rustc::ty::{self, Ty, TypeFoldable, TyCtxt};
 
-use super::{BlockAndBuilder, MirContext};
+use {BlockAndBuilder, MirContext};
+use lvalue::{LvalueRef, ValueRef};
 
 pub enum OperandValue {
 
@@ -20,19 +21,19 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     pub fn trans_operand(&mut self,
                          bcx: &BlockAndBuilder<'bcx, 'tcx>,
                          operand: &mir::Operand<'tcx>)
-                         -> OperandRef<'tcx>
+                         -> Option<OperandRef<'tcx>>
     {
         println!("trans_operand(operand={:?})", operand);
 
         match *operand {
             mir::Operand::Consume(ref lvalue) => {
-                // self.trans_consume(bcx, lvalue)
-                unimplemented!()
+                self.trans_consume(bcx, lvalue)
             }
 
             mir::Operand::Constant(ref constant) => {
-                /*
                 let val = self.trans_constant(bcx, constant);
+
+                /*
                 let operand = val.to_operand(bcx.ccx());
                 if let OperandValue::Ref(ptr) = operand.val {
                     // If this is a OperandValue::Ref to an immediate constant, load it.
@@ -45,5 +46,41 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 unimplemented!()
             }
         }
+    }
+
+    pub fn trans_load(&mut self,
+                      bcx: &BlockAndBuilder<'bcx, 'tcx>,
+                      spv_val: ValueRef,
+                      ty: Ty<'tcx>)
+                      -> OperandRef<'tcx>
+    {
+        println!("trans_load: {:?} @ {:?}", spv_val, ty);
+        unimplemented!()
+    }
+
+    pub fn trans_consume(&mut self,
+                         bcx: &BlockAndBuilder<'bcx, 'tcx>,
+                         lvalue: &mir::Lvalue<'tcx>)
+                         -> Option<OperandRef<'tcx>>
+    {
+        println!("trans_consume(lvalue={:?})", lvalue);
+
+        let tr_lvalue = self.trans_lvalue(bcx, lvalue);
+        match tr_lvalue {
+            LvalueRef::Value(val, ty) => {
+                let ty = ty.to_ty(bcx.tcx());
+                Some(self.trans_load(bcx, val, ty))
+            }
+            LvalueRef::Ref { .. } => unimplemented!(),
+            LvalueRef::SigStruct(_, _) => unimplemented!(),
+            LvalueRef::Ignore => None,
+        }
+    }
+
+    pub fn store_operand(&mut self,
+                         bcx: &BlockAndBuilder<'bcx, 'tcx>,
+                         dest: LvalueRef,
+                         operand: OperandRef<'tcx>)
+    {
     }
 }

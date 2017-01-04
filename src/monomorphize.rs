@@ -1,10 +1,7 @@
 
 use super::*;
-use rustc::hir::def_id::DefId;
-use rustc::infer::TransNormalize;
-use rustc::ty::fold::{TypeFolder, TypeFoldable};
 use rustc::ty::subst::Subst;
-use rustc::util::common::MemoizationMap;
+use rustc::ty::fold::{TypeFolder, TypeFoldable};
 use rustc::util::ppaux;
 use std::fmt;
 
