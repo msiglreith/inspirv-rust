@@ -6,7 +6,7 @@ use {BlockAndBuilder, MirContext};
 use lvalue::{LvalueRef, ValueRef};
 
 pub enum OperandValue {
-
+  Immediate(ValueRef),
 }
 
 pub struct OperandRef<'tcx> {
@@ -31,19 +31,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
 
             mir::Operand::Constant(ref constant) => {
-                let val = self.trans_constant(bcx, constant);
-
-                /*
-                let operand = val.to_operand(bcx.ccx());
-                if let OperandValue::Ref(ptr) = operand.val {
-                    // If this is a OperandValue::Ref to an immediate constant, load it.
-                    self.trans_load(bcx, ptr, operand.ty)
-                } else {
-                    operand
-                }
-                */
-
-                unimplemented!()
+                let const_val = self.trans_constant(bcx, constant);
+                Some(OperandRef {
+                  val: OperandValue::Immediate(const_val.spv_val),
+                  ty: const_val.ty,
+                })
             }
         }
     }
@@ -82,5 +74,9 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          dest: LvalueRef,
                          operand: OperandRef<'tcx>)
     {
+        println!("store_operand: operand={:?}", operand);
+        bcx.with_block(|bcx| {
+
+        });
     }
 }

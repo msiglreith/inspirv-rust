@@ -75,7 +75,7 @@ use syntax::ast::{self, NodeId};
 
 use inspirv::types::{Id, LiteralInteger};
 use inspirv::core::enumeration::*;
-use inspirv_builder::function::{Function, FuncId};
+use inspirv_builder::function::{Function, FuncId, LocalVar};
 use inspirv_builder::module::{ModuleBuilder, Type};
 
 use self::attributes::Attribute;
@@ -495,7 +495,14 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
                 // just skip it..
                 None
             } else {
-                // TODO 
+                // TODO: we need to add references to the final module?
+                let mut fn_def = fcx.spv_fn_decl.borrow_mut();
+                let spv_local = LocalVar {
+                    id: spv_id,
+                    ty: spv_ty.ty().clone(),
+                };
+                fn_def.variables.push(spv_local);
+
                 Some(LocalRef::from(spv_id, spv_ty))
             }
         }).collect::<IndexVec<mir::Local, _>>();
