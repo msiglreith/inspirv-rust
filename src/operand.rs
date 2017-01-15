@@ -1,14 +1,17 @@
 
 use rustc::mir;
 use rustc::ty::{self, Ty, TypeFoldable, TyCtxt};
+use inspirv::core::instruction::*;
 
 use {BlockAndBuilder, MirContext};
 use lvalue::{LvalueRef, ValueRef};
 
+#[derive(Debug)]
 pub enum OperandValue {
   Immediate(ValueRef),
 }
 
+#[derive(Debug)]
 pub struct OperandRef<'tcx> {
     // The value.
     pub val: OperandValue,
@@ -47,7 +50,19 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                       -> OperandRef<'tcx>
     {
         println!("trans_load: {:?} @ {:?}", spv_val, ty);
-        unimplemented!()
+        let mut builder = self.fcx.spv().borrow_mut();
+        let operand_id = builder.alloc_id();
+        bcx.with_block(|bcx| {
+          bcx.spv_block.borrow_mut().emit_instruction(OpLoad(builder.define_type(&spv_val.spvty), operand_id, spv_val.spvid, None))
+        });
+
+        OperandRef {
+          val: OperandValue::Immediate(ValueRef {
+            spvid: operand_id,
+            spvty: spv_val.spvty,
+          }),
+          ty: ty,
+        }
     }
 
     pub fn trans_consume(&mut self,
@@ -63,8 +78,14 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 let ty = ty.to_ty(bcx.tcx());
                 Some(self.trans_load(bcx, val, ty))
             }
-            LvalueRef::Ref { .. } => unimplemented!(),
-            LvalueRef::SigStruct(_, _) => unimplemented!(),
+            LvalueRef::Ref { .. } => {
+              // unimplemented!(),
+              None
+            }
+            LvalueRef::SigStruct(_, _) => {
+              // unimplemented!(),
+              None
+            }
             LvalueRef::Ignore => None,
         }
     }

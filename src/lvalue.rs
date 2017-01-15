@@ -30,7 +30,7 @@ pub struct ValueRef{
 }
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
-    fn revolve_lvalue(&mut self,
+    fn resolve_lvalue(&mut self,
                       bcx: &BlockAndBuilder<'bcx, 'tcx>,
                       lvalue: &mir::Lvalue<'tcx>)
                       -> LvalueInner<'tcx> {
@@ -94,7 +94,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                         -> LvalueRef<'tcx> {
         println!("trans_lvalue(lvalue={:?})", lvalue);
 
-        let inner = self.revolve_lvalue(bcx, lvalue);
+        let inner = self.resolve_lvalue(bcx, lvalue);
 
         // Lift inner lvalue to an simplier type if possible
         match inner {
