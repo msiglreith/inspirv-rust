@@ -1,7 +1,7 @@
 # inspirv-rust
 
 An experimental compiler from [Rust] to [SPIR-V], using the `rustc` compiler and [MIR].
-The code is based upon [miri] and [mir2wasm].
+The code is based upon [rustc_trans::mir], legacy version was based on [miri] and [mir2wasm].
 
 > rustc 1.15.0-nightly (daf8c1dfc 2016-12-05)
 
@@ -21,9 +21,7 @@ cargo run -- rust-examples\quad.rs --extern std=libstd.rlib --extern core=libcor
 
 ## Resources
 
-* [miri](https://github.com/solson/miri) the MIR interpreter. mir2wasm is derived
-  from it but shares no actual code. It probably should share code though, and
-  there's lots to learn from miri.
+* [miri](https://github.com/solson/miri) the MIR interpreter.
 * [rustc_trans::mir](https://github.com/rust-lang/rust/tree/master/src/librustc_trans/mir).
 * [mir2wasm](https://github.com/brson/mir2wasm)
 

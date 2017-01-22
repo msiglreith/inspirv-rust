@@ -75,7 +75,7 @@ use syntax::ast::{self, NodeId};
 
 use inspirv::types::{Id, LiteralInteger};
 use inspirv::core::enumeration::*;
-use inspirv_builder::function::{Function, FuncId};
+use inspirv_builder::function::{Function, FuncId, LocalVar};
 use inspirv_builder::module::{ModuleBuilder, Type};
 
 use self::attributes::Attribute;
@@ -325,6 +325,8 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
     let mir = fcx.mir();
     let tcx = fcx.ccx.tcx();
 
+    println!("trans_function: {:#?}", mir);
+
     // Allocate a `Block` for every basic block
     let block_bcxs: IndexVec<mir::BasicBlock, Block<'blk,'tcx>> =
         mir.basic_blocks().indices().map(|_| {
@@ -432,33 +434,36 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
                                     builder.name_id_member(ty_id, member as u32, &*field.name.as_str());
                                 }
 
-                                let fields = if let Type::Struct(fields) = ty { fields } else { bug!("cbuffer not a struct!") };
-                                let mut offset = 0;
-                                for (member, field) in fields.iter().enumerate() {
-                                    let unalignment = offset % field.alignment();
-                                    if unalignment != 0 {
-                                        offset += field.alignment() - unalignment;
+                                {
+                                    let fields = if let &Type::Struct(ref fields) = &ty { fields } else { bug!("cbuffer not a struct!") };
+                                    let mut offset = 0;
+                                    for (member, field) in fields.iter().enumerate() {
+                                        let unalignment = offset % field.alignment();
+                                        if unalignment != 0 {
+                                            offset += field.alignment() - unalignment;
+                                        }
+
+                                        builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationOffset(LiteralInteger(offset as u32)));
+                                        offset += field.size_of();
+
+                                        // Matrix types require ColMajor/RowMajor decorations and MatrixStride [SPIR-V 2.16.2]
+                                        if let Type::Matrix { ref base, rows, .. } = *field {
+                                            let stride = Type::Vector { base: base.clone(), components: rows }.size_of();
+                                            builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationMatrixStride(LiteralInteger(stride as u32)));
+                                            builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationColMajor);
+                                        }
                                     }
 
-                                    builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationOffset(LiteralInteger(offset as u32)));
-                                    offset += field.size_of();
-
-                                    // Matrix types require ColMajor/RowMajor decorations and MatrixStride [SPIR-V 2.16.2]
-                                    if let Type::Matrix { ref base, rows, .. } = *field {
-                                        let stride = Type::Vector { base: base.clone(), components: rows }.size_of();
-                                        builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationMatrixStride(LiteralInteger(stride as u32)));
-                                        builder.add_decoration_member(ty_id, member as u32, Decoration::DecorationColMajor);
+                                    let attrs = attributes::attributes(fcx.ccx, struct_ty_did);
+                                    for attr in attrs {
+                                        if let Attribute::Descriptor { set, binding } = attr {
+                                            builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
+                                            builder.add_decoration(id, Decoration::DecorationBinding(LiteralInteger(binding as u32)));
+                                        }
                                     }
                                 }
 
-                                let attrs = attributes::attributes(fcx.ccx, struct_ty_did);
-                                for attr in attrs {
-                                    if let Attribute::Descriptor { set, binding } = attr {
-                                        builder.add_decoration(id, Decoration::DecorationDescriptorSet(LiteralInteger(set as u32)));
-                                        builder.add_decoration(id, Decoration::DecorationBinding(LiteralInteger(binding as u32)));
-                                    }
-                                }
-
+                                return Some(LocalRef::from(id, SpvType::NoRef(ty)));
                             }
                         }
                         bug!("Const buffer argument type requires to be struct type")
@@ -495,7 +500,14 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
                 // just skip it..
                 None
             } else {
-                // TODO 
+                // TODO: we need to add references to the final module?
+                let mut fn_def = fcx.spv_fn_decl.borrow_mut();
+                let spv_local = LocalVar {
+                    id: spv_id,
+                    ty: spv_ty.ty().clone(),
+                };
+                fn_def.variables.push(spv_local);
+
                 Some(LocalRef::from(spv_id, spv_ty))
             }
         }).collect::<IndexVec<mir::Local, _>>();

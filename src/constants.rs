@@ -12,20 +12,27 @@ use {MirContext, BlockAndBuilder};
 use context::CrateContext;
 use lvalue::ValueRef;
 use type_of;
+use operand::{OperandRef, OperandValue};
 
 use inspirv_builder::module::{self, ConstValue, ConstValueFloat};
 
 /// A sized constant rvalue.
 #[derive(Clone, Debug)]
 pub struct Const<'tcx> {
-    pub spv_val: ValueRef,
+    pub val: ConstRef,
     pub ty: Ty<'tcx>
 }
 
+#[derive(Clone, Debug)]
+pub enum ConstRef {
+    Value(ValueRef),
+    Null,
+}
+
 impl<'tcx> Const<'tcx> {
-    pub fn new(spv_val: ValueRef, ty: Ty<'tcx>) -> Const<'tcx> {
+    pub fn new(val: ConstRef, ty: Ty<'tcx>) -> Const<'tcx> {
         Const {
-            spv_val: spv_val,
+            val: val,
             ty: ty
         }
     }
@@ -75,13 +82,24 @@ impl<'tcx> Const<'tcx> {
         };
 
         let constant_id = ccx.spv().borrow_mut().define_constant(const_val);
-        Const::new(
-            ValueRef {
-                spvid: constant_id,
-                spvty: spv_ty,
-            },
-            ty,
-        )
+        let value = ValueRef {
+            spvid: constant_id,
+            spvty: spv_ty,
+        };
+
+        Const::new(ConstRef::Value(value), ty)
+    }
+
+    pub fn to_operand<'a>(self, ccx: &CrateContext<'a, 'tcx>) -> OperandRef<'tcx> {
+        let val = match self.val {
+            ConstRef::Value(val) => OperandValue::Immediate(val),
+            ConstRef::Null => OperandValue::Null,
+        };
+
+        OperandRef {
+            val: val,
+            ty: self.ty,
+        }
     }
 }
 
@@ -91,12 +109,12 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                           constant: &mir::Constant<'tcx>)
                           -> Const<'tcx>
     {
-        println!("trans_constant({:?})", constant);
+        println!("trans_constant({:#?})", constant);
 
         let ty = bcx.monomorphize(&constant.ty);
         let result = match constant.literal.clone() {
             mir::Literal::Item { def_id, substs } => {
-                unimplemented!()
+                Const::new(ConstRef::Null, ty)
             }
 
             mir::Literal::Promoted { index } => {
@@ -109,7 +127,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
         };
 
 
-        println!("trans_constant({:?}) = {:?}", constant, result);
+        println!("trans_constant({:#?}) = {:#?}", constant, result);
         result
     }
 }

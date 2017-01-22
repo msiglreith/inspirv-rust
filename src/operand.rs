@@ -1,14 +1,18 @@
 
 use rustc::mir;
 use rustc::ty::{self, Ty, TypeFoldable, TyCtxt};
+use inspirv::core::instruction::*;
 
 use {BlockAndBuilder, MirContext};
 use lvalue::{LvalueRef, ValueRef};
 
+#[derive(Debug)]
 pub enum OperandValue {
-
+  Immediate(ValueRef),
+  Null,
 }
 
+#[derive(Debug)]
 pub struct OperandRef<'tcx> {
     // The value.
     pub val: OperandValue,
@@ -23,7 +27,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          operand: &mir::Operand<'tcx>)
                          -> Option<OperandRef<'tcx>>
     {
-        println!("trans_operand(operand={:?})", operand);
+        println!("trans_operand(operand={:#?})", operand);
 
         match *operand {
             mir::Operand::Consume(ref lvalue) => {
@@ -31,19 +35,9 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
 
             mir::Operand::Constant(ref constant) => {
-                let val = self.trans_constant(bcx, constant);
-
-                /*
-                let operand = val.to_operand(bcx.ccx());
-                if let OperandValue::Ref(ptr) = operand.val {
-                    // If this is a OperandValue::Ref to an immediate constant, load it.
-                    self.trans_load(bcx, ptr, operand.ty)
-                } else {
-                    operand
-                }
-                */
-
-                unimplemented!()
+                let const_val = self.trans_constant(bcx, constant);
+                let operand = const_val.to_operand(bcx.ccx());
+                Some(operand)
             }
         }
     }
@@ -54,8 +48,20 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                       ty: Ty<'tcx>)
                       -> OperandRef<'tcx>
     {
-        println!("trans_load: {:?} @ {:?}", spv_val, ty);
-        unimplemented!()
+        println!("trans_load: {:#?} @ {:#?}", spv_val, ty);
+        let mut builder = self.fcx.spv().borrow_mut();
+        let operand_id = builder.alloc_id();
+        bcx.with_block(|bcx| {
+            bcx.spv_block.borrow_mut().emit_instruction(OpLoad(builder.define_type(&spv_val.spvty), operand_id, spv_val.spvid, None))
+        });
+
+        OperandRef {
+          val: OperandValue::Immediate(ValueRef {
+            spvid: operand_id,
+            spvty: spv_val.spvty,
+          }),
+          ty: ty,
+        }
     }
 
     pub fn trans_consume(&mut self,
@@ -63,7 +69,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          lvalue: &mir::Lvalue<'tcx>)
                          -> Option<OperandRef<'tcx>>
     {
-        println!("trans_consume(lvalue={:?})", lvalue);
+        println!("trans_consume(lvalue={:#?})", lvalue);
 
         let tr_lvalue = self.trans_lvalue(bcx, lvalue);
         match tr_lvalue {
@@ -71,8 +77,14 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 let ty = ty.to_ty(bcx.tcx());
                 Some(self.trans_load(bcx, val, ty))
             }
-            LvalueRef::Ref { .. } => unimplemented!(),
-            LvalueRef::SigStruct(_, _) => unimplemented!(),
+            LvalueRef::Ref { .. } => {
+                // unimplemented!(),
+                None
+            }
+            LvalueRef::SigStruct(_, _) => {
+                // unimplemented!(),
+                None
+            }
             LvalueRef::Ignore => None,
         }
     }
@@ -82,5 +94,9 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          dest: LvalueRef,
                          operand: OperandRef<'tcx>)
     {
+        println!("store_operand: operand={:#?}", operand);
+        bcx.with_block(|bcx| {
+
+        });
     }
 }
