@@ -9,6 +9,7 @@ use lvalue::{LvalueRef, ValueRef};
 #[derive(Debug)]
 pub enum OperandValue {
   Immediate(ValueRef),
+  Null,
 }
 
 #[derive(Debug)]
@@ -26,7 +27,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          operand: &mir::Operand<'tcx>)
                          -> Option<OperandRef<'tcx>>
     {
-        println!("trans_operand(operand={:?})", operand);
+        println!("trans_operand(operand={:#?})", operand);
 
         match *operand {
             mir::Operand::Consume(ref lvalue) => {
@@ -35,10 +36,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
             mir::Operand::Constant(ref constant) => {
                 let const_val = self.trans_constant(bcx, constant);
-                Some(OperandRef {
-                  val: OperandValue::Immediate(const_val.spv_val),
-                  ty: const_val.ty,
-                })
+                let operand = const_val.to_operand(bcx.ccx());
+                Some(operand)
             }
         }
     }
@@ -49,11 +48,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                       ty: Ty<'tcx>)
                       -> OperandRef<'tcx>
     {
-        println!("trans_load: {:?} @ {:?}", spv_val, ty);
+        println!("trans_load: {:#?} @ {:#?}", spv_val, ty);
         let mut builder = self.fcx.spv().borrow_mut();
         let operand_id = builder.alloc_id();
         bcx.with_block(|bcx| {
-          bcx.spv_block.borrow_mut().emit_instruction(OpLoad(builder.define_type(&spv_val.spvty), operand_id, spv_val.spvid, None))
+            bcx.spv_block.borrow_mut().emit_instruction(OpLoad(builder.define_type(&spv_val.spvty), operand_id, spv_val.spvid, None))
         });
 
         OperandRef {
@@ -70,7 +69,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          lvalue: &mir::Lvalue<'tcx>)
                          -> Option<OperandRef<'tcx>>
     {
-        println!("trans_consume(lvalue={:?})", lvalue);
+        println!("trans_consume(lvalue={:#?})", lvalue);
 
         let tr_lvalue = self.trans_lvalue(bcx, lvalue);
         match tr_lvalue {
@@ -79,12 +78,12 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 Some(self.trans_load(bcx, val, ty))
             }
             LvalueRef::Ref { .. } => {
-              // unimplemented!(),
-              None
+                // unimplemented!(),
+                None
             }
             LvalueRef::SigStruct(_, _) => {
-              // unimplemented!(),
-              None
+                // unimplemented!(),
+                None
             }
             LvalueRef::Ignore => None,
         }
@@ -95,7 +94,7 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                          dest: LvalueRef,
                          operand: OperandRef<'tcx>)
     {
-        println!("store_operand: operand={:?}", operand);
+        println!("store_operand: operand={:#?}", operand);
         bcx.with_block(|bcx| {
 
         });

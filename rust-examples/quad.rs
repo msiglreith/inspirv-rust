@@ -25,22 +25,24 @@ struct Locals {
     dimensions: Float2,
 }
 
+/*
 #[inspirv(entry_point = "vertex")]
 fn vertex(vertex: Attributes<QuadVertex>) -> QuadVarying {
     QuadVarying {
-        pos: vertex.pos,
-        color: vertex.color,
+        pos: Float4::new(0.0, 0.0, 0.0, 1.0), //vertex.pos,
+        color: Float4::new(0.0, 0.0, 0.0, 1.0), //vertex.color,
     }
 }
+*/
 
 #[inspirv(entry_point = "fragment")]
 fn fragment(varying: Attributes<QuadVarying>, fragment: Attributes<QuadFragment>, local: Cbuffer<Locals>) -> QuadOut {
-    let w = local.dimensions.x;
-    let h = local.dimensions.x;
+    // let w = local.dimensions.x;
+    // let h = local.dimensions.x;
     QuadOut {
         color: Float4::new(
-            fragment.coord.x / w,
-            fragment.coord.y / h,
+            0.0, //fragment.coord.x / w,
+            0.0, //fragment.coord.y / h,
             0.0, 1.0),
     }
 }

@@ -14,14 +14,14 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
         let mut bcx = self.bcx(bb);
         let data = &CellRef::clone(&self.mir)[bb];
 
-        println!("trans_block({:?}={:?})", bb, data);
+        println!("trans_block({:?}={:#?})", bb, data);
 
         for statement in &data.statements {
             bcx = self.trans_statement(bcx, statement);
         }
 
         let terminator = data.terminator();
-        println!("trans_block: terminator: {:?}", terminator);
+        println!("trans_block: terminator: {:#?}", terminator);
 
         match terminator.kind {
             mir::TerminatorKind::Return => {
@@ -47,7 +47,13 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
 
             mir::TerminatorKind::Call { ref func, ref args, ref destination, .. } => {
                 let callee = self.trans_operand(&bcx, func);
-                unimplemented!()
+
+                // TODO:
+                bcx.with_block(|block| {
+                    block.spv_block.borrow_mut().branch_instr = Some(
+                        BranchInstruction::Unreachable(OpUnreachable));
+                });
+                // unimplemented!()
             }
 
             mir::TerminatorKind::Drop { target, .. } |

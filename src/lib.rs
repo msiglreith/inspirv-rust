@@ -325,7 +325,7 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
     let mir = fcx.mir();
     let tcx = fcx.ccx.tcx();
 
-    println!("trans_function: {:?}", mir);
+    println!("trans_function: {:#?}", mir);
 
     // Allocate a `Block` for every basic block
     let block_bcxs: IndexVec<mir::BasicBlock, Block<'blk,'tcx>> =

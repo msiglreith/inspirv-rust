@@ -80,7 +80,10 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 let const_ty = self.monomorphized_lvalue_ty(lvalue);
                 bug!("unsupported static lvalue {:?}", const_ty)
             }
-            mir::Lvalue::Projection(ref proj) => {
+            mir::Lvalue::Projection(ref projection) => {
+                let tr_base = self.trans_lvalue(bcx, &projection.base);
+                
+                println!("{:?}", (projection, tr_base));
                 unimplemented!()
             }
         };
