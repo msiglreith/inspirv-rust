@@ -487,14 +487,15 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
             let decl = &mir.local_decls[local];
             let ty = fcx.monomorphize(&decl.ty);
 
+            let spv_id = builder.alloc_id();
+            let spv_ty = type_of::spv_type_of(fcx.ccx, ty);
+
             if let Some(name) = decl.name {
                 println!("alloc: {:?} ({}) -> lvalue", local, name);
+                builder.name_id(spv_id, &*name.as_str());
             } else {
                 println!("alloc: {:?} -> lvalue", local);
             }
-
-            let spv_id = builder.alloc_id();
-            let spv_ty = type_of::spv_type_of(fcx.ccx, ty);
 
             if Type::Void == *spv_ty.ty() {
                 // just skip it..
