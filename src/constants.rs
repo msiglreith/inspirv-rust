@@ -60,6 +60,7 @@ impl<'tcx> Const<'tcx> {
                 let i = v.as_i64(ccx.tcx().sess.target.int_type);
                 module::Constant::Scalar(ConstValue::I64(i))
             },
+            ConstVal::Integral(I128(_)) => bug!("Inspirv: `i128` is not supported for shaders `{:?}`", cv),
             ConstVal::Integral(U8(v)) => bug!("Inspirv: `u8` is not supported for shaders `{:?}`", cv),
             ConstVal::Integral(U16(v)) => module::Constant::Scalar(ConstValue::U16(v)),
             ConstVal::Integral(U32(v)) => module::Constant::Scalar(ConstValue::U32(v)),
@@ -68,7 +69,7 @@ impl<'tcx> Const<'tcx> {
                 let u = v.as_u64(ccx.tcx().sess.target.uint_type);
                 module::Constant::Scalar(ConstValue::U64(u))
             },
-
+            ConstVal::Integral(U128(_)) => bug!("Inspirv: `u128` is not supported for shaders `{:?}`", cv),
             ConstVal::Char(c) => bug!("Inspirv: `char` is (currently) not supported for shaders `{:?}`", cv),
 
             ConstVal::Integral(Infer(_)) |
@@ -78,7 +79,6 @@ impl<'tcx> Const<'tcx> {
             ConstVal::Struct(_) | ConstVal::Tuple(_) |
             ConstVal::Array(..) | ConstVal::Repeat(..) |
             ConstVal::Function(_) => bug!("MIR must not use `{:?}` (which refers to a local ID)", cv),
-            ConstVal::Dummy => bug!(),
         };
 
         let constant_id = ccx.spv().borrow_mut().define_constant(const_val);

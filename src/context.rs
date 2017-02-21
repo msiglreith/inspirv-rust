@@ -10,6 +10,7 @@ use rustc::middle::cstore::LinkMeta;
 use rustc::session::Session;
 use rustc::ty::subst::Substs;
 use rustc::traits;
+use syntax_pos::DUMMY_SP;
 
 use std::cell::RefCell;
 use std::marker::PhantomData;
@@ -32,6 +33,7 @@ pub struct SharedCrateContext<'a, 'tcx: 'a> {
     trait_cache: RefCell<DepTrackingMap<TraitSelectionCache<'tcx>>>,
     project_cache: RefCell<DepTrackingMap<ProjectionCache<'tcx>>>,
     builder: RefCell<ModuleBuilder>,
+    empty_param_env: ty::ParameterEnvironment<'tcx>,
 
     /// Cache instances of monomorphic and polymorphic items
     instances: RefCell<FxHashMap<Instance<'tcx>, FuncId>>,
@@ -56,6 +58,7 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
             project_cache: RefCell::new(DepTrackingMap::new(tcx.dep_graph.clone())),
             builder: RefCell::new(builder),
             instances: RefCell::new(FxHashMap()),
+            empty_param_env: tcx.empty_parameter_environment(),
         }
     }
 
@@ -103,6 +106,10 @@ impl<'b, 'tcx> SharedCrateContext<'b, 'tcx> {
                          |_, _| {
             bug!("empty_substs_for_def_id: {:?} has type parameters", item_def_id)
         })
+    }
+
+    pub fn type_is_sized(&self, ty: Ty<'tcx>) -> bool {
+        ty.is_sized(self.tcx, &self.empty_param_env, DUMMY_SP)
     }
 }
 
@@ -181,6 +188,7 @@ impl<'gcx> DepTrackingMapConfig for ProjectionCache<'gcx> {
                    _ => None,
                })
                .collect();
-        DepNode::TraitSelect(def_ids)
+
+        DepNode::ProjectionCache { def_ids: def_ids }
     }
 }

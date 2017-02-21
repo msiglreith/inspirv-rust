@@ -561,6 +561,21 @@ pub trait Not {
     fn not(self) -> Self::Output;
 }
 
+macro_rules! not_impl {
+    ($($t:ty)*) => ($(
+        impl Not for $t {
+            type Output = $t;
+
+            #[inline]
+            fn not(self) -> $t { !self }
+        }
+
+        forward_ref_unop! { impl Not, not for $t }
+    )*)
+}
+
+not_impl! { bool usize u16 u32 u64 isize i16 i32 i64 }
+
 /// The `BitAnd` trait is used to specify the functionality of `&`.
 ///
 /// # Examples

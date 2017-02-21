@@ -64,8 +64,9 @@ pub fn spv_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> SpvTyp
         // TyTuple(&[]):
         //  Rust seems to emit () instead of void for function return types
         ty::TyNever => NoRef(Type::Void),
-        ty::TyTuple(tys) if tys.is_empty() => NoRef(Type::Void),
-        ty::TyTuple(tys) => NoRef(Type::Struct(
+        ty::TyTuple(_, true) => NoRef(Type::Void),
+        ty::TyTuple(tys, _) if tys.is_empty() => NoRef(Type::Void),
+        ty::TyTuple(tys, _) => NoRef(Type::Struct(
             tys.iter().map(|ty| spv_type_of(cx, ty).no_ref().unwrap()).collect::<Vec<_>>())),
 
         ty::TyRef(_, ty_mut) => {

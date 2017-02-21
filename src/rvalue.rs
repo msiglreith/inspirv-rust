@@ -3,6 +3,7 @@ use rustc::mir;
 
 use {BlockAndBuilder, MirContext};
 use lvalue::LvalueRef;
+use operand::OperandValue;
 
 impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     pub fn trans_rvalue(&mut self,
@@ -22,49 +23,39 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 bcx
            }
 
-            mir::Rvalue::Cast(mir::CastKind::Unsize, ref source, cast_ty) => {
+            mir::Rvalue::Cast(mir::CastKind::Misc, ref source, cast_ty) => {
                 let cast_ty = bcx.monomorphize(&cast_ty);
 
-                /*
-                if common::type_is_fat_ptr(bcx.tcx(), cast_ty) {
-                    // into-coerce of a thin pointer to a fat pointer - just
-                    // use the operand path.
-                    let (bcx, temp) = self.trans_rvalue_operand(bcx, rvalue, debug_loc);
-                    self.store_operand(&bcx, dest.llval, temp);
-                    return bcx;
+                // casting a constant
+                // just define a new constant with cast type
+                match *source {
+                    mir::Operand::Constant(_) => {
+                        // TODO:
+                        return bcx;
+                    }
+                    _ => {}
                 }
 
-                // Unsize of a nontrivial struct. I would prefer for
-                // this to be eliminated by MIR translation, but
-                // `CoerceUnsized` can be passed by a where-clause,
-                // so the (generic) MIR may not be able to expand it.
-                let operand = self.trans_operand(&bcx, source);
-                let operand = operand.pack_if_pair(&bcx);
+                let operand = self.trans_operand(&bcx, source).unwrap();
                 bcx.with_block(|bcx| {
                     match operand.val {
-                        OperandValue::Pair(..) => bug!(),
-                        OperandValue::Immediate(llval) => {
-                            // unsize from an immediate structure. We don't
-                            // really need a temporary alloca here, but
-                            // avoiding it would require us to have
-                            // `coerce_unsized_into` use extractvalue to
-                            // index into the struct, and this case isn't
-                            // important enough for it.
-                            debug!("trans_rvalue: creating ugly alloca");
-                            let lltemp = base::alloc_ty(bcx, operand.ty, "__unsize_temp");
-                            base::store_ty(bcx, llval, lltemp, operand.ty);
-                            base::coerce_unsized_into(bcx,
-                                                      lltemp, operand.ty,
-                                                      dest.llval, cast_ty);
+                        OperandValue::Immediate(ref val) => {
+                            println!("cast_rvalue(cast_ty={:?})", cast_ty);
+
+                            // TODO:
                         }
-                        OperandValue::Ref(llref) => {
-                            base::coerce_unsized_into(bcx,
-                                                      llref, operand.ty,
-                                                      dest.llval, cast_ty);
+                        OperandValue::Null => {
+                            bug!()
                         }
                     }
                 });
-                */
+                bcx
+            }
+
+            mir::Rvalue::Ref(_, _, ref lvalue) => {
+                let tr_lvalue = self.trans_lvalue(&bcx, lvalue);
+
+                println!("Ref {:?}", tr_lvalue);
                 bcx
             }
 
@@ -124,9 +115,8 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 bcx
             }
 
-            mir::Rvalue::InlineAsm { .. } |
             mir::Rvalue::Box(..) => {
-                bug!("Invalid inline asm")
+                bug!("Invalid box rvalue")
             }
 
             _ => {

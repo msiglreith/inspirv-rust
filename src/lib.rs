@@ -532,7 +532,7 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
                                                              StorageClass::StorageClassOutput);
 
                                 let field_attrs = attributes::struct_field_attributes(fcx.ccx, ty_id, field.did);
-                                println!("{:?}", tcx.map.as_local_node_id(field.did));
+                                println!("{:?}", tcx.hir.as_local_node_id(field.did));
                                 let mut attribute_loc = None;
                                 for attr in field_attrs {
                                     match attr {
@@ -561,10 +561,9 @@ pub fn trans_function<'blk, 'tcx: 'blk>(fcx: &'blk FunctionContext<'blk, 'tcx>) 
 
                             return Some(LocalRef::Interface(interfaces))
                         }
-                        ty::TyTuple(tys) if tys.is_empty() => {
-                            // MIR doesn't use TyVoid for ()
-                            return None;
-                        }
+                        // MIR doesn't use TyVoid for ()
+                        ty::TyTuple(_, true) => return None,
+                        ty::TyTuple(tys, _) if tys.is_empty() => return None,
                         _ => {}
                     }
 
@@ -750,9 +749,9 @@ pub fn find_exported_symbols(tcx: TyCtxt, reachable: NodeSet) -> NodeSet {
         //
         // As a result, if this id is an FFI item (foreign item) then we only
         // let it through if it's included statically.
-        match tcx.map.get(id) {
+        match tcx.hir.get(id) {
             hir_map::NodeForeignItem(..) => {
-                let def_id = tcx.map.local_def_id(id);
+                let def_id = tcx.hir.local_def_id(id);
                 tcx.sess.cstore.is_statically_included_foreign_item(def_id)
             }
 
@@ -763,7 +762,7 @@ pub fn find_exported_symbols(tcx: TyCtxt, reachable: NodeSet) -> NodeSet {
                 node: hir::ItemFn(..), .. }) |
             hir_map::NodeImplItem(&hir::ImplItem {
                 node: hir::ImplItemKind::Method(..), .. }) => {
-                let def_id = tcx.map.local_def_id(id);
+                let def_id = tcx.hir.local_def_id(id);
                 let generics = tcx.item_generics(def_id);
                 let attributes = tcx.get_attrs(def_id);
                 (generics.parent_types == 0 && generics.types.is_empty()) &&
@@ -792,8 +791,7 @@ fn write_metadata(cx: &SharedCrateContext,
             config::CrateTypeStaticlib |
             config::CrateTypeCdylib => MetadataKind::None,
 
-            config::CrateTypeRlib |
-            config::CrateTypeMetadata => MetadataKind::Uncompressed,
+            config::CrateTypeRlib => MetadataKind::Uncompressed,
 
             config::CrateTypeDylib |
             config::CrateTypeProcMacro => MetadataKind::Compressed,
@@ -914,18 +912,6 @@ fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 ab.add_file(&metadata_file);
                 ab.build();
             }
-
-            config::CrateTypeMetadata => {
-                let filename = format!("lib{}.rmeta", name);
-                let ofile = Path::new(&filename);
-                let out_path = if let Some(out_dir) = *out_dir { out_dir.join(ofile) } else { ofile.to_path_buf() };
-                println!("{:?}", ofile);
-
-                let result = File::create(&out_path).and_then(|mut f| f.write_all(&metadata));
-                if let Err(e) = result {
-                    tcx.sess.fatal(&format!("failed to write {}: {}", out_path.display(), e));
-                }
-            }
             
             config::CrateTypeStaticlib => {
                 // Static libraries are compiled to spv modules
@@ -1007,7 +993,7 @@ pub fn fulfill_obligation<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 
         // Do the initial selection for the obligation. This yields the
         // shallow result we are looking for -- that is, what specific impl.
-        tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
+        tcx.infer_ctxt((), Reveal::All).enter(|infcx| {
             let mut selcx = SelectionContext::new(&infcx);
 
             let obligation_cause = traits::ObligationCause::misc(span,

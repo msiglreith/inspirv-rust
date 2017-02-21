@@ -56,9 +56,9 @@ pub fn struct_field_attributes<'a, 'tcx: 'a>(
         struct_id: DefId,
         field_id: DefId) -> Vec<Attribute> {
     let tcx = cx.tcx();
-    let (item, field_id) = if let Some(struct_id) = tcx.map.as_local_node_id(struct_id) {
-        let item = tcx.map.get(struct_id);
-        let field_id = tcx.map.as_local_node_id(field_id).unwrap();
+    let (item, field_id) = if let Some(struct_id) = tcx.hir.as_local_node_id(struct_id) {
+        let item = tcx.hir.get(struct_id);
+        let field_id = tcx.hir.as_local_node_id(field_id).unwrap();
         if let hir::map::Node::NodeItem(item) = item {
             (item, field_id)
         } else {
@@ -66,9 +66,9 @@ pub fn struct_field_attributes<'a, 'tcx: 'a>(
         }
     } else {
         // TODO: cleanup and not sure if correct..
-        let item_id = tcx.sess.cstore.maybe_get_item_ast(tcx, struct_id).unwrap().1;
-        let item = tcx.map.get(item_id);
-        let field_id = tcx.map.as_local_node_id(field_id).unwrap();
+        let item_id = tcx.sess.cstore.maybe_get_item_body(tcx, struct_id).unwrap().value.id;
+        let item = tcx.hir.get(item_id);
+        let field_id = tcx.hir.as_local_node_id(field_id).unwrap();
         if let hir::map::Node::NodeItem(item) = item {
             (item, field_id)
         } else {
@@ -121,7 +121,7 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                 "location" => {
                                     match value.node {
                                         LitKind::Int(b, LitIntType::Unsigned(..))
-                                        | LitKind::Int(b, LitIntType::Unsuffixed) => attrs.push(Attribute::Location { location: b }),
+                                        | LitKind::Int(b, LitIntType::Unsuffixed) => attrs.push(Attribute::Location { location: b as u64 }),
                                         _ => return Err(sess.struct_span_err(value.span, "Inspirv: Location value must be an integer")),
                                     };
                                 },
@@ -171,7 +171,7 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                         return Err(sess.struct_span_err(item.span, "Inspirv: vector misses `base` or `component` attributes"));
                                     } else {
                                         attrs.push(Attribute::Vector { 
-                                            components: components.unwrap()
+                                            components: components.unwrap() as u64,
                                         });
                                     }
                                 }
@@ -211,8 +211,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                         return Err(sess.struct_span_err(item.span, "Inspirv: matrix misses `rows` or `cols` attributes"));
                                     } else {
                                         attrs.push(Attribute::Matrix { 
-                                            rows: rows.unwrap(),
-                                            cols: cols.unwrap(),
+                                            rows: rows.unwrap() as u64,
+                                            cols: cols.unwrap() as u64,
                                         });
                                     }
                                 }
@@ -252,8 +252,8 @@ pub fn parse<'a>(sess: &'a Session, ast_attribs: &[syntax::ast::Attribute]) -> P
                                         sess.span_err(item.span, "`inspirv` descriptor misses `set` or `binding` attributes");
                                     } else {
                                         attrs.push(Attribute::Descriptor { 
-                                            set: set.unwrap(),
-                                            binding: binding.unwrap()
+                                            set: set.unwrap() as u64,
+                                            binding: binding.unwrap() as u64,
                                         });
                                     }
                                 }

@@ -140,42 +140,84 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
 pub trait Ord: Eq + PartialOrd<Self> {
 }
 
-macro_rules! partial_eq_impl {
-    ($($t:ty)+) => ($(
-        impl PartialEq for $t {
-            #[inline]
-            #[inspirv(compiler_builtin)]
-            fn eq(&self, other: &$t) -> bool { *self == *other }
+// Implementation of PartialEq, Eq, PartialOrd and Ord for primitive types
+mod impls {
+    macro_rules! partial_eq_impl {
+        ($($t:ty)*) => ($(
+    
+            impl PartialEq for $t {
+                #[inline]
+                fn eq(&self, other: &$t) -> bool { (*self) == (*other) }
+                #[inline]
+                fn ne(&self, other: &$t) -> bool { (*self) != (*other) }
+            }
+        )*)
+    }
 
-            #[inline]
-            #[inspirv(compiler_builtin)]
-            fn ne(&self, other: &$t) -> bool { *self != *other }
+    impl PartialEq for () {
+        #[inline]
+        fn eq(&self, _other: &()) -> bool { true }
+        #[inline]
+        fn ne(&self, _other: &()) -> bool { false }
+    }
+
+    partial_eq_impl! {
+        bool char usize u16 u32 u64 isize i16 i32 i64 f32 f64
+    }
+
+    macro_rules! eq_impl {
+        ($($t:ty)*) => ($(
+    
+            impl Eq for $t {}
+        )*)
+    }
+
+    eq_impl! { () bool char usize u16 u32 u64 isize i16 i32 i64 }
+
+    macro_rules! partial_ord_impl {
+        ($($t:ty)*) => ($(
+    
+            impl PartialOrd for $t {
+                #[inline]
+                fn lt(&self, other: &$t) -> bool { (*self) < (*other) }
+                #[inline]
+                fn le(&self, other: &$t) -> bool { (*self) <= (*other) }
+                #[inline]
+                fn ge(&self, other: &$t) -> bool { (*self) >= (*other) }
+                #[inline]
+                fn gt(&self, other: &$t) -> bool { (*self) > (*other) }
+            }
+        )*)
+    }
+
+    partial_ord_impl! { f32 f64 }
+
+    macro_rules! ord_impl {
+        ($($t:ty)*) => ($(
+            impl PartialOrd for $t {
+                #[inline]
+                fn lt(&self, other: &$t) -> bool { (*self) < (*other) }
+                #[inline]
+                fn le(&self, other: &$t) -> bool { (*self) <= (*other) }
+                #[inline]
+                fn ge(&self, other: &$t) -> bool { (*self) >= (*other) }
+                #[inline]
+                fn gt(&self, other: &$t) -> bool { (*self) > (*other) }
+            }
+
+    
+            impl Ord for $t {
+            }
+        )*)
+    }
+
+    ord_impl! { bool char usize u16 u32 u64 isize i16 i32 i64 }
+
+    impl PartialEq for ! {
+        fn eq(&self, _: &!) -> bool {
+            *self
         }
-    )+)
+    }
+
+    impl Eq for ! {}
 }
-
-partial_eq_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }
-
-macro_rules! partial_ord_impl {
-    ($($t:ty)+) => ($(
-        impl PartialOrd for $t {
-            #[inline]
-            #[inspirv(compiler_builtin)]
-            fn lt(&self, other: &$t) -> bool { *self < *other }
-
-            #[inline]
-            #[inspirv(compiler_builtin)]
-            fn le(&self, other: &$t) -> bool { *self <= *other }
-
-            #[inline]
-            #[inspirv(compiler_builtin)]
-            fn gt(&self, other: &$t) -> bool { *self > *other }
-
-            #[inline]
-            #[inspirv(compiler_builtin)]
-            fn ge(&self, other: &$t) -> bool { *self >= *other }
-        }
-    )+)
-}
-
-partial_ord_impl! { usize u16 u32 u64 isize i16 i32 i64 f32 f64 }

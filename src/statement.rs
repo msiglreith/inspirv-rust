@@ -30,6 +30,9 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
                 */
                 bcx
             }
+            mir::StatementKind::InlineAsm { .. } => {
+                bug!("unsupported inline asm")
+            }
             mir::StatementKind::StorageLive(..) |
             mir::StatementKind::StorageDead(..) |
             mir::StatementKind::Nop => bcx,

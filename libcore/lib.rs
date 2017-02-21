@@ -20,6 +20,7 @@
 #![feature(prelude_import)]
 #![feature(specialization)]
 #![feature(associated_type_defaults)]
+#![feature(never_type)]
 
 #![allow(dead_code)]
 #![allow(unused_attributes)]
@@ -27,6 +28,9 @@
 
 #[prelude_import]
 use prelude::v1::*;
+
+#[macro_use]
+mod internal_macros;
 
 #[macro_use]
 mod macros;

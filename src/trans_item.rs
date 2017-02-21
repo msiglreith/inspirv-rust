@@ -32,13 +32,13 @@ impl<'a, 'tcx> TransItem<'tcx> {
     pub fn predefine(&self, ccx: &CrateContext<'a, 'tcx>) {
         match *self {
             TransItem::Static(node_id) => {
-                let def_id = ccx.tcx().map.local_def_id(node_id);
+                let def_id = ccx.tcx().hir.local_def_id(node_id);
                 let ty = ccx.tcx().item_type(def_id);
                 let spv_ty = type_of::spv_type_of(ccx, ty);
 
                 /*
                 let g = declare::define_global(ccx, symbol_name, llty).unwrap_or_else(|| {
-                    ccx.sess().span_fatal(ccx.tcx().map.span(node_id),
+                    ccx.sess().span_fatal(ccx.tcx().hir.span(node_id),
                         &format!("symbol `{}` is already defined", symbol_name))
                 });
 
@@ -66,9 +66,9 @@ impl<'a, 'tcx> TransItem<'tcx> {
     pub fn define(&self, ccx: &CrateContext<'a, 'tcx>) {
         match *self {
             TransItem::Static(node_id) => {
-                let def_id = ccx.tcx().map.local_def_id(node_id);
+                let def_id = ccx.tcx().hir.local_def_id(node_id);
                 let _task = ccx.tcx().dep_graph.in_task(DepNode::TransCrateItem(def_id));
-                let item = ccx.tcx().map.expect_item(node_id);
+                let item = ccx.tcx().hir.expect_item(node_id);
                 if let hir::ItemStatic(_, m, _) = item.node {
                     match trans_static(&ccx, m, item.id, &item.attrs) {
                         Ok(_) => { /* Cool, everything's alright. */ },
@@ -115,7 +115,7 @@ impl<'a, 'tcx> TransItem<'tcx> {
     }
 
     pub fn to_string(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> String {
-        let hir_map = &tcx.map;
+        let hir_map = &tcx.hir;
 
         return match *self {
             TransItem::Fn(instance) => {
@@ -193,18 +193,20 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
             ty::TyInt(ast::IntTy::I16)   => output.push_str("i16"),
             ty::TyInt(ast::IntTy::I32)   => output.push_str("i32"),
             ty::TyInt(ast::IntTy::I64)   => output.push_str("i64"),
+            ty::TyInt(ast::IntTy::I128)   => output.push_str("i128"),
             ty::TyUint(ast::UintTy::Us)   => output.push_str("usize"),
             ty::TyUint(ast::UintTy::U8)   => output.push_str("u8"),
             ty::TyUint(ast::UintTy::U16)  => output.push_str("u16"),
             ty::TyUint(ast::UintTy::U32)  => output.push_str("u32"),
             ty::TyUint(ast::UintTy::U64)  => output.push_str("u64"),
+            ty::TyUint(ast::UintTy::U128)   => output.push_str("u128"),
             ty::TyFloat(ast::FloatTy::F32) => output.push_str("f32"),
             ty::TyFloat(ast::FloatTy::F64) => output.push_str("f64"),
             ty::TyAdt(adt_def, substs) => {
                 self.push_def_path(adt_def.did, output);
                 self.push_type_params(substs, iter::empty(), output);
             },
-            ty::TyTuple(component_types) => {
+            ty::TyTuple(component_types, _) => {
                 output.push('(');
                 for &component_type in component_types {
                     self.push_type_name(component_type, output);
@@ -215,11 +217,6 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
                     output.pop();
                 }
                 output.push(')');
-            },
-            ty::TyBox(inner_type) => {
-                output.push_str("Box<");
-                self.push_type_name(inner_type, output);
-                output.push('>');
             },
             ty::TyRawPtr(ty::TypeAndMut { ty: inner_type, mutbl } ) => {
                 output.push('*');

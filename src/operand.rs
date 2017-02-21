@@ -8,8 +8,8 @@ use lvalue::{LvalueRef, ValueRef};
 
 #[derive(Debug)]
 pub enum OperandValue {
-  Immediate(ValueRef),
-  Null,
+    Immediate(ValueRef),
+    Null,
 }
 
 #[derive(Debug)]
@@ -56,11 +56,11 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
         });
 
         OperandRef {
-          val: OperandValue::Immediate(ValueRef {
-            spvid: operand_id,
-            spvty: spv_val.spvty,
-          }),
-          ty: ty,
+            val: OperandValue::Immediate(ValueRef {
+                spvid: operand_id,
+                spvty: spv_val.spvty,
+            }),
+            ty: ty,
         }
     }
 
@@ -96,7 +96,20 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
     {
         println!("store_operand: operand={:#?}", operand);
         bcx.with_block(|bcx| {
-
+            match operand.val {
+                OperandValue::Immediate(ref op) => {
+                    match dest {
+                        LvalueRef::Value(ref lval, _) => {
+                            bcx.spv_block.borrow_mut().emit_instruction(
+                                OpStore(lval.spvid, op.spvid, None))
+                        }
+                        _ => unimplemented!(),
+                    }  
+                }
+                OperandValue::Null => {
+                    bug!()
+                }
+            }
         });
     }
 }

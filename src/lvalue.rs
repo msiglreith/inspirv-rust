@@ -7,6 +7,7 @@ use inspirv::types::*;
 use inspirv_builder::module::{Type};
 
 use {BlockAndBuilder, MirContext, LocalRef};
+use type_of;
 
 #[derive(Debug, Clone)]
 pub enum LvalueRef<'tcx> {
@@ -25,7 +26,6 @@ enum LvalueInner<'tcx> {
 #[derive(Debug, Clone)]
 pub struct ValueRef{
     pub spvid: Id,
-
     pub spvty: Type,
 }
 
@@ -82,9 +82,25 @@ impl<'bcx, 'tcx> MirContext<'bcx, 'tcx> {
             }
             mir::Lvalue::Projection(ref projection) => {
                 let tr_base = self.trans_lvalue(bcx, &projection.base);
+                let ty = self.monomorphized_lvalue_ty(lvalue);
+                let spv_ty = type_of::spv_type_of(ccx, &ty).expect_no_ref();
+                let ty = LvalueTy::from_ty(self.monomorphized_lvalue_ty(lvalue));
+
+                println!("{:?}", (projection, &tr_base));
                 
-                println!("{:?}", (projection, tr_base));
-                unimplemented!()
+                match (&projection.elem, tr_base) {
+                    (&mir::ProjectionElem::Deref, LvalueRef::Ref(id, Some(referent), _)) => {
+                        LvalueInner::LvalueRef(
+                            LvalueRef::Value(
+                                ValueRef {
+                                    spvid: referent,
+                                    spvty: spv_ty,
+                                },
+                                ty
+                            ))
+                    }
+                    _ => unimplemented!(),
+                }
             }
         };
 
