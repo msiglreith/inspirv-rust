@@ -1,5 +1,7 @@
 # inspirv-rust
 
+NOTE: Development currently slowed down as other projects have priority for now. Will keep on working on it in the future!
+
 An experimental compiler from [Rust] to [SPIR-V], using the `rustc` compiler and [MIR].
 The code is based upon [rustc_trans::mir], legacy version was based on [miri] and [mir2wasm].
 
