@@ -1,9 +1,11 @@
 # inspirv-rust
 
-NOTE: Development currently slowed down as other projects have priority for now. Will keep on working on it in the future!
+UPDATE 2: Next design iteration would probably be based on HIR instead of MIR. See more details [here](https://github.com/gfx-rs/gfx/issues/71#issuecomment-316728752) and initial work is done [here](https://github.com/msiglreith/rust/commit/1c047f4801683ee1e1dccc00b054639010d1f5e2).
+
+UPDATE: Development currently slowed down as other projects (i.e gfx-rs) have priority over this one. Will keep on working on it in the future (see above)!
 
 An experimental compiler from [Rust] to [SPIR-V], using the `rustc` compiler and [MIR].
-The code is based upon [rustc_trans::mir], legacy version was based on [miri] and [mir2wasm].
+The code is based upon [rustc_trans::mir], legacy (_actually working_) version was based on [miri] and [mir2wasm].
 
 ```
 rustc 1.17.0-nightly (0e7727795 2017-02-19)
