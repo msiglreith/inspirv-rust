@@ -1,6 +1,6 @@
 # inspirv-rust
 
-UPDATE 2: Next design iteration would probably be based on HIR instead of MIR. See more details [here](https://github.com/gfx-rs/gfx/issues/71#issuecomment-316728752) and initial work is done [here](https://github.com/msiglreith/rust/commit/1c047f4801683ee1e1dccc00b054639010d1f5e2).
+UPDATE 2: Next design iteration would probably be based on HIR instead of MIR. See more details [here](https://github.com/gfx-rs/gfx/issues/71#issuecomment-316728752). In the meantime, you might want to checkout [rlsl](https://github.com/MaikKlein/rlsl)!
 
 UPDATE: Development currently slowed down as other projects (i.e gfx-rs) have priority over this one. Will keep on working on it in the future (see above)!
 
